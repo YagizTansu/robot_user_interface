@@ -269,10 +269,20 @@ const RobotMap: React.FC<RobotMapProps> = ({
     }
     
     if (polygonMode.isActive && polygonMode.startPoint) {
-      const mapContent = e.currentTarget;
-      const rect = mapContent.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width) * 100;
-      const y = ((e.clientY - rect.top) / rect.height) * 100;
+      const svg = e.currentTarget.querySelector('svg');
+      if (!svg) return;
+      
+      // SVG koordinat sistemine dönüştür
+      const pt = svg.createSVGPoint();
+      pt.x = e.clientX;
+      pt.y = e.clientY;
+      
+      const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
+      
+      // SVG koordinatlarını yüzde değerine çevir
+      const x = (svgP.x / svgDimensions.width) * 100;
+      const y = (svgP.y / svgDimensions.height) * 100;
+      
       setMousePosition({ 
         x: Math.max(0, Math.min(100, x)), 
         y: Math.max(0, Math.min(100, y)) 
@@ -303,38 +313,6 @@ const RobotMap: React.FC<RobotMapProps> = ({
   const stopPolygonCreation = () => {
     setPolygonMode({ isActive: false, type: 'restricted', startPoint: undefined });
     setMousePosition({ x: 0, y: 0 });
-  };
-
-  const handleMapClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    // Polygon drawing mode
-    if (!polygonMode.isActive) return;
-    
-    const mapContent = event.currentTarget;
-    const rect = mapContent.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * 100;
-    const y = ((event.clientY - rect.top) / rect.height) * 100;
-    
-    const clickPoint = { 
-      x: Math.max(0, Math.min(100, x)), 
-      y: Math.max(0, Math.min(100, y)) 
-    };
-    
-    if (!polygonMode.startPoint) {
-      setPolygonMode(prev => ({ ...prev, startPoint: clickPoint }));
-    } else {
-      const newArea: RestrictedArea = {
-        id: `area-${Date.now()}`,
-        name: `${polygonMode.type === 'restricted' ? 'Restricted' : 'Docking'} Area ${restrictedAreas.length + 1}`,
-        startPoint: polygonMode.startPoint,
-        endPoint: clickPoint,
-        color: polygonMode.type === 'restricted' ? '#ef4444' : '#3b82f6',
-        type: polygonMode.type
-      };
-      
-      const updatedAreas = [...restrictedAreas, newArea];
-      onRestrictedAreasChange?.(updatedAreas);
-      stopPolygonCreation();
-    }
   };
 
   const selectArea = (areaId: string) => {
@@ -446,7 +424,6 @@ const RobotMap: React.FC<RobotMapProps> = ({
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          onClick={handleMapClick}
         >
           <img 
             src={mapImagePath}
@@ -469,11 +446,51 @@ const RobotMap: React.FC<RobotMapProps> = ({
               left: 0,
               width: '100%',
               height: '100%',
-              pointerEvents: isGraphEditorMode && isAddingNode ? 'auto' : 'none',
+              pointerEvents: (isGraphEditorMode && isAddingNode) || polygonMode.isActive ? 'auto' : 'none',
               zIndex: 5,
-              cursor: isGraphEditorMode && isAddingNode ? 'crosshair' : 'default'
+              cursor: (isGraphEditorMode && isAddingNode) || polygonMode.isActive ? 'crosshair' : 'default'
             }}
             onClick={(e) => {
+              // Polygon drawing mode
+              if (polygonMode.isActive) {
+                const svg = e.currentTarget;
+                
+                // SVG koordinat sisteminde tıklanan noktayı al
+                const pt = svg.createSVGPoint();
+                pt.x = e.clientX;
+                pt.y = e.clientY;
+                
+                // Screen koordinatlarını SVG koordinatlarına çevir
+                const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
+                
+                // SVG koordinatlarını yüzde değerine çevir
+                const x = (svgP.x / svgDimensions.width) * 100;
+                const y = (svgP.y / svgDimensions.height) * 100;
+                
+                const clickPoint = { 
+                  x: Math.max(0, Math.min(100, x)), 
+                  y: Math.max(0, Math.min(100, y)) 
+                };
+                
+                if (!polygonMode.startPoint) {
+                  setPolygonMode(prev => ({ ...prev, startPoint: clickPoint }));
+                } else {
+                  const newArea: RestrictedArea = {
+                    id: `area-${Date.now()}`,
+                    name: `${polygonMode.type === 'restricted' ? 'Restricted' : 'Docking'} Area ${restrictedAreas.length + 1}`,
+                    startPoint: polygonMode.startPoint,
+                    endPoint: clickPoint,
+                    color: polygonMode.type === 'restricted' ? '#ef4444' : '#3b82f6',
+                    type: polygonMode.type
+                  };
+                  
+                  const updatedAreas = [...restrictedAreas, newArea];
+                  onRestrictedAreasChange?.(updatedAreas);
+                  stopPolygonCreation();
+                }
+                return;
+              }
+              
               // Graph editor mode - SVG içinde node ekleme
               if (isGraphEditorMode && isAddingNode && graphData && onGraphDataChange && mapMetadata) {
                 const svg = e.currentTarget;
