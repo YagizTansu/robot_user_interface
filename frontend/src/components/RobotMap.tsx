@@ -56,11 +56,22 @@ interface Point {
 interface RestrictedArea {
   id: string;
   name: string;
-  startPoint: Point;
-  endPoint: Point;
+  startPoint?: Point;
+  endPoint?: Point;
+  polygonPoints?: number[]; // ROS koordinatları [x1, y1, x2, y2, ...]
   color: string;
-  type: 'restricted' | 'docking-pallet';
+  type: 'restricted' | 'docking-pallet' | 'polygon';
   isSelected?: boolean;
+  robotName?: string; // Hangi robota ait olduğu
+}
+
+interface ProhibitedZone {
+  _id: string;
+  robot_name: string;
+  zone_name: string;
+  zone_type: string;
+  polygon_points: number[];
+  timestamp: number;
 }
 
 interface GraphNode {
@@ -158,6 +169,40 @@ const RobotMap: React.FC<RobotMapProps> = ({
 
     loadSvgDimensions();
   }, [mapImagePath]);
+
+  // Prohibited zones'ları yükle ve restrictedAreas'a ekle
+  useEffect(() => {
+    const loadProhibitedZones = async () => {
+      try {
+        const response = await fetch('http://localhost:3000/zones');
+        if (response.ok) {
+          const zones: ProhibitedZone[] = await response.json();
+          console.log('Prohibited zones loaded:', zones);
+          
+          // Prohibited zones'ları RestrictedArea formatına çevir
+          const convertedZones: RestrictedArea[] = zones.map(zone => ({
+            id: zone._id,
+            name: zone.zone_name,
+            polygonPoints: zone.polygon_points,
+            color: '#ef4444', // Kırmızı renk
+            type: 'polygon',
+            robotName: zone.robot_name,
+            isSelected: false
+          }));
+          
+          // Mevcut restrictedAreas'a ekle (prop olarak gelen alanlar varsa)
+          if (onRestrictedAreasChange) {
+            const combinedAreas = [...restrictedAreas, ...convertedZones];
+            onRestrictedAreasChange(combinedAreas);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading prohibited zones:', error);
+      }
+    };
+
+    loadProhibitedZones();
+  }, []);
 
   const convertToPixel = (position: { x: number; y: number }) => {
     // ROS koordinatlarını direkt pixel'e çeviriyoruz
@@ -315,8 +360,66 @@ const RobotMap: React.FC<RobotMapProps> = ({
     setSelectedAreaId(selectedAreaId === areaId ? null : areaId);
   };
 
-  const deleteSelectedArea = () => {
+  const saveAreaToDatabase = async (area: RestrictedArea, robotName: string = 'agv001') => {
+    // Polygon tipindeki alanları veritabanına kaydet
+    if (area.type === 'polygon' && area.polygonPoints && area.polygonPoints.length > 0) {
+      try {
+        const response = await fetch('http://localhost:3000/zones', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            robot_name: robotName,
+            zone_name: area.name,
+            zone_type: 'polygon',
+            polygon_points: area.polygonPoints,
+            timestamp: Date.now()
+          }),
+        });
+
+        if (response.ok) {
+          const savedZone = await response.json();
+          console.log('Zone saved to database:', savedZone);
+          return savedZone;
+        } else {
+          console.error('Failed to save zone to database');
+        }
+      } catch (error) {
+        console.error('Error saving zone to database:', error);
+      }
+    }
+  };
+
+  const deleteAreaFromDatabase = async (areaId: string) => {
+    try {
+      const response = await fetch(`http://localhost:3000/zones/${areaId}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        console.log('Zone deleted from database:', areaId);
+        return true;
+      } else {
+        console.error('Failed to delete zone from database');
+        return false;
+      }
+    } catch (error) {
+      console.error('Error deleting zone from database:', error);
+      return false;
+    }
+  };
+
+  const deleteSelectedArea = async () => {
     if (!selectedAreaId) return;
+    
+    const selectedArea = restrictedAreas.find(area => area.id === selectedAreaId);
+    
+    // Eğer veritabanından gelen bir zone ise (MongoDB ObjectId formatında), veritabanından da sil
+    if (selectedArea && selectedArea.type === 'polygon' && selectedArea.id.length === 24) {
+      await deleteAreaFromDatabase(selectedArea.id);
+    }
+    
     const updatedAreas = restrictedAreas.filter((area: RestrictedArea) => area.id !== selectedAreaId);
     onRestrictedAreasChange?.(updatedAreas);
     setSelectedAreaId(null);
@@ -480,14 +583,50 @@ const RobotMap: React.FC<RobotMapProps> = ({
                 if (!polygonMode.startPoint) {
                   setPolygonMode(prev => ({ ...prev, startPoint: clickPoint }));
                 } else {
+                  // Rectangle köşe noktalarını ROS koordinatlarına çevir
+                  let rosCoordinates: number[] = [];
+                  
+                  if (mapMetadata) {
+                    // Yüzde değerlerini SVG pixel koordinatlarına çevir
+                    const startX = (polygonMode.startPoint.x / 100) * actualWidth;
+                    const startY = (polygonMode.startPoint.y / 100) * actualHeight;
+                    const endX = (clickPoint.x / 100) * actualWidth;
+                    const endY = (clickPoint.y / 100) * actualHeight;
+                    
+                    // Rectangle'ın 4 köşe noktasını hesapla (saat yönünde)
+                    const corners = [
+                      { x: Math.min(startX, endX), y: Math.min(startY, endY) }, // Sol üst
+                      { x: Math.max(startX, endX), y: Math.min(startY, endY) }, // Sağ üst
+                      { x: Math.max(startX, endX), y: Math.max(startY, endY) }, // Sağ alt
+                      { x: Math.min(startX, endX), y: Math.max(startY, endY) }, // Sol alt
+                    ];
+                    
+                    // Her köşe noktasını ROS koordinatlarına çevir
+                    corners.forEach(corner => {
+                      const rosY = mapMetadata.height - corner.y;
+                      const rosX = (corner.x * mapMetadata.resolution) + mapMetadata.origin.x;
+                      const rosYCoord = (rosY * mapMetadata.resolution) + mapMetadata.origin.y;
+                      rosCoordinates.push(parseFloat(rosX.toFixed(2)), parseFloat(rosYCoord.toFixed(2)));
+                    });
+                    
+                    console.log('ROS Coordinates:', rosCoordinates);
+                  }
+                  
                   const newArea: RestrictedArea = {
                     id: `area-${Date.now()}`,
                     name: `${polygonMode.type === 'restricted' ? 'Restricted' : 'Docking'} Area ${restrictedAreas.length + 1}`,
                     startPoint: polygonMode.startPoint,
                     endPoint: clickPoint,
+                    polygonPoints: rosCoordinates.length > 0 ? rosCoordinates : undefined,
                     color: polygonMode.type === 'restricted' ? '#ef4444' : '#3b82f6',
-                    type: polygonMode.type
+                    type: 'polygon',
+                    robotName: 'agv001'
                   };
+                  
+                  // Veritabanına kaydet
+                  if (rosCoordinates.length > 0) {
+                    saveAreaToDatabase(newArea);
+                  }
                   
                   const updatedAreas = [...restrictedAreas, newArea];
                   onRestrictedAreasChange?.(updatedAreas);
@@ -678,40 +817,101 @@ const RobotMap: React.FC<RobotMapProps> = ({
 
             {/* Render existing restricted areas */}
             {restrictedAreas.map((area: RestrictedArea) => {
-              const startPos = area.startPoint;
-              const endPos = area.endPoint;
-              
-              const x = Math.min(startPos.x, endPos.x);
-              const y = Math.min(startPos.y, endPos.y);
-              const width = Math.abs(endPos.x - startPos.x);
-              const height = Math.abs(endPos.y - startPos.y);
-              
               const isSelected = selectedAreaId === area.id;
               
-              return (
-                <g key={area.id}>
-                  <rect
-                    x={`${x}%`}
-                    y={`${y}%`}
-                    width={`${width}%`}
-                    height={`${height}%`}
-                    fill={area.color}
-                    fillOpacity="0.2"
-                    stroke={area.color}
-                    strokeWidth={isSelected ? "3" : "2"}
-                    strokeDasharray={isSelected ? "8,4" : "none"}
-                    style={{
-                      pointerEvents: 'auto',
-                      cursor: 'pointer',
-                      filter: isSelected ? 'drop-shadow(0 0 8px rgba(239, 68, 68, 0.4))' : 'none'
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      selectArea(area.id);
-                    }}
-                  />
-                </g>
-              );
+              // Polygon tipindeki alanlar için
+              if (area.type === 'polygon' && area.polygonPoints) {
+                // polygon_points'i [x1, y1, x2, y2, ...] formatından SVG points formatına çevir
+                const points = area.polygonPoints
+                  .reduce((acc, val, idx) => {
+                    if (idx % 2 === 0) {
+                      const x = val;
+                      const y = area.polygonPoints![idx + 1];
+                      // ROS koordinatlarını pixel'e çevir
+                      if (mapMetadata) {
+                        const pixelPos = convertRosToPixel(x, y);
+                        acc.push(`${pixelPos.x},${pixelPos.y}`);
+                      } else {
+                        acc.push(`${x},${y}`);
+                      }
+                    }
+                    return acc;
+                  }, [] as string[])
+                  .join(' ');
+
+                return (
+                  <g key={area.id}>
+                    <polygon
+                      points={points}
+                      fill={area.color}
+                      fillOpacity="0.3"
+                      stroke={area.color}
+                      strokeWidth={isSelected ? "3" : "2"}
+                      strokeDasharray={isSelected ? "8,4" : "5,5"}
+                      style={{
+                        pointerEvents: 'auto',
+                        cursor: 'pointer',
+                        filter: isSelected ? 'drop-shadow(0 0 8px rgba(239, 68, 68, 0.4))' : 'none'
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        selectArea(area.id);
+                      }}
+                    />
+                    {/* Zone ismi göster */}
+                    {area.polygonPoints.length >= 2 && mapMetadata && (
+                      <text
+                        x={convertRosToPixel(area.polygonPoints[0], area.polygonPoints[1]).x}
+                        y={convertRosToPixel(area.polygonPoints[0], area.polygonPoints[1]).y}
+                        fill={area.color}
+                        fontSize="12"
+                        fontWeight="bold"
+                        style={{ userSelect: 'none' }}
+                      >
+                        {area.name}
+                      </text>
+                    )}
+                  </g>
+                );
+              }
+              
+              // Rectangle tipindeki alanlar için (eski format)
+              if (area.startPoint && area.endPoint) {
+                const startPos = area.startPoint;
+                const endPos = area.endPoint;
+                
+                const x = Math.min(startPos.x, endPos.x);
+                const y = Math.min(startPos.y, endPos.y);
+                const width = Math.abs(endPos.x - startPos.x);
+                const height = Math.abs(endPos.y - startPos.y);
+                
+                return (
+                  <g key={area.id}>
+                    <rect
+                      x={`${x}%`}
+                      y={`${y}%`}
+                      width={`${width}%`}
+                      height={`${height}%`}
+                      fill={area.color}
+                      fillOpacity="0.2"
+                      stroke={area.color}
+                      strokeWidth={isSelected ? "3" : "2"}
+                      strokeDasharray={isSelected ? "8,4" : "none"}
+                      style={{
+                        pointerEvents: 'auto',
+                        cursor: 'pointer',
+                        filter: isSelected ? 'drop-shadow(0 0 8px rgba(239, 68, 68, 0.4))' : 'none'
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        selectArea(area.id);
+                      }}
+                    />
+                  </g>
+                );
+              }
+              
+              return null;
             })}
 
             {/* Render all robots inside SVG */}

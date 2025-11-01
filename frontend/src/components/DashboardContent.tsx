@@ -28,8 +28,8 @@ interface Point {
 interface RestrictedArea {
   id: string;
   name: string;
-  startPoint: Point;
-  endPoint: Point;
+  startPoint?: Point;
+  endPoint?: Point;
   color: string;
   type: 'restricted' | 'docking-pallet';
   isSelected?: boolean;
