@@ -4,12 +4,14 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
 import { RobotsModule } from './robots/robots.module';
+import { ZonesModule } from './zones/zones.module';
 
 @Module({
   imports: [
     MongooseModule.forRoot('mongodb://localhost:27017/robot_database'),
     UsersModule, 
-    RobotsModule
+    RobotsModule,
+    ZonesModule
   ],
   controllers: [AppController],
   providers: [AppService],

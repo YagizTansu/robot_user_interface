@@ -270,9 +270,14 @@ const RobotMap: React.FC<RobotMapProps> = ({
       
       const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
       
+      // SVG viewBox'tan gerçek boyutları al
+      const viewBox = svg.viewBox.baseVal;
+      const actualWidth = viewBox.width || svgDimensions.width;
+      const actualHeight = viewBox.height || svgDimensions.height;
+      
       // SVG koordinatlarını yüzde değerine çevir
-      const x = (svgP.x / svgDimensions.width) * 100;
-      const y = (svgP.y / svgDimensions.height) * 100;
+      const x = (svgP.x / actualWidth) * 100;
+      const y = (svgP.y / actualHeight) * 100;
       
       setMousePosition({ 
         x: Math.max(0, Math.min(100, x)), 
@@ -454,9 +459,18 @@ const RobotMap: React.FC<RobotMapProps> = ({
                 // Screen koordinatlarını SVG koordinatlarına çevir
                 const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
                 
+                // SVG viewBox'tan gerçek boyutları al
+                const viewBox = svg.viewBox.baseVal;
+                const actualWidth = viewBox.width || svgDimensions.width;
+                const actualHeight = viewBox.height || svgDimensions.height;
+                
                 // SVG koordinatlarını yüzde değerine çevir
-                const x = (svgP.x / svgDimensions.width) * 100;
-                const y = (svgP.y / svgDimensions.height) * 100;
+                const x = (svgP.x / actualWidth) * 100;
+                const y = (svgP.y / actualHeight) * 100;
+                
+                console.log('Polygon Click - SVG:', { x: svgP.x.toFixed(1), y: svgP.y.toFixed(1) }, 
+                           'ViewBox:', { width: actualWidth, height: actualHeight },
+                           'Percent:', { x: x.toFixed(2), y: y.toFixed(2) });
                 
                 const clickPoint = { 
                   x: Math.max(0, Math.min(100, x)), 
@@ -696,19 +710,6 @@ const RobotMap: React.FC<RobotMapProps> = ({
                       selectArea(area.id);
                     }}
                   />
-                  {/* Area label */}
-                  <text
-                    x={`${x + width/2}%`}
-                    y={`${y + height/2}%`}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fill={area.color}
-                    fontSize="12"
-                    fontWeight="600"
-                    style={{ pointerEvents: 'none', userSelect: 'none' }}
-                  >
-                    {area.name}
-                  </text>
                 </g>
               );
             })}
