@@ -35,14 +35,6 @@ export class RobotsService {
         sensors: ['LiDAR', 'Camera', 'IMU']
       }
     };
-
-    // Debug log
-    console.log(`Transforming robot pose for ${robotPose.robot_name}:
-      Input ROS position: (${robotPose.pose.pose.position.x}, ${robotPose.pose.pose.position.y})
-      Input quaternion: (${x}, ${y}, ${z}, ${w})
-      Output position: (${transformedRobot.position.x}, ${transformedRobot.position.y})
-      Output orientation: ${transformedRobot.orientation.toFixed(1)}°`);
-
     return transformedRobot;
   }
 

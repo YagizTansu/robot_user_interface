@@ -182,15 +182,6 @@ const RobotMap: React.FC<RobotMapProps> = ({
     // ROS'ta Y ekseni yukarı, image'lerde Y ekseni aşağı
     const imageY = mapMetadata.height - pixelY;
     
-    // Debug log - daha detaylı bilgi
-    console.log(`ROS->Pixel Conversion:
-      Input ROS: (${rosX.toFixed(2)}, ${rosY.toFixed(2)})
-      Map Origin: (${mapMetadata.origin.x}, ${mapMetadata.origin.y})
-      Resolution: ${mapMetadata.resolution} m/px
-      Map Size: ${mapMetadata.width}x${mapMetadata.height} px
-      Calculated pixel: (${pixelX.toFixed(1)}, ${pixelY.toFixed(1)})
-      Final image coords: (${pixelX.toFixed(1)}, ${imageY.toFixed(1)})`);
-    
     return {
       x: pixelX,
       y: imageY
@@ -725,13 +716,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
             {/* Render all robots inside SVG */}
             {robots.map((robot) => {
               const robotPos = convertToPixel(robot.position);
-              
-              // Debug: Robot pozisyonları
-              console.log(`Robot ${robot.id} positioning:
-                Original position: (${robot.position.x}, ${robot.position.y})
-                Converted pixel: (${robotPos.x.toFixed(1)}, ${robotPos.y.toFixed(1)})
-                SVG dimensions: ${svgDimensions.width}x${svgDimensions.height}`);
-              
+                            
               // Robot gerçek boyutları: 100cm x 80cm
               const robotRealWidth = 1.0; // 100cm = 1.0m
               const robotRealHeight = 0.8; // 80cm = 0.8m
