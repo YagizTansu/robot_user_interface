@@ -8,7 +8,8 @@ import { Server, Socket } from 'socket.io';
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Robot, RobotDocument } from '../robots/schemas/robot.schema';
+import { RobotPose, RobotPoseDocument } from '../robots/schemas/robot.schema';
+import { RobotsService } from '../robots/robots.service';
 
 @Injectable()
 @WebSocketGateway({
@@ -24,7 +25,8 @@ export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private changeStream: any;
 
   constructor(
-    @InjectModel(Robot.name) private robotModel: Model<RobotDocument>,
+    @InjectModel(RobotPose.name) private robotPoseModel: Model<RobotPoseDocument>,
+    private robotsService: RobotsService,
   ) {}
 
   async onModuleInit() {
@@ -52,7 +54,7 @@ export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private async sendCurrentRobotData(client: Socket) {
     try {
-      const robots = await this.robotModel.find().exec();
+      const robots = await this.robotsService.findAll();
       client.emit('robots-data', robots);
     } catch (error) {
       console.error('Error sending current robot data:', error);
@@ -62,18 +64,18 @@ export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private initChangeStreams() {
     try {
-      // MongoDB Change Streams'i robot koleksiyonu için başlat
-      this.changeStream = this.robotModel.watch([], {
+      // MongoDB Change Streams'i robots_pose koleksiyonu için başlat
+      this.changeStream = this.robotPoseModel.watch([], {
         fullDocument: 'updateLookup',
         fullDocumentBeforeChange: 'whenAvailable'
       });
 
       this.changeStream.on('change', async (change) => {
-        console.log('Robot collection change detected:', change.operationType);
+        console.log('Robot pose collection change detected:', change.operationType);
         
         try {
           // Her değişiklikte güncel tüm robot verilerini gönder
-          const robots = await this.robotModel.find().exec();
+          const robots = await this.robotsService.findAll();
           this.server.emit('robots-data', robots);
           
           // Ayrıca spesifik değişiklik tipini de bildir
@@ -99,7 +101,7 @@ export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }, 5000);
       });
 
-      console.log('MongoDB Change Streams initialized for robots collection');
+      console.log('MongoDB Change Streams initialized for robots_pose collection');
     } catch (error) {
       console.error('Error initializing change streams:', error);
     }
@@ -108,7 +110,7 @@ export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // Manuel olarak robot verilerini yayınlamak için kullanılabilir
   async broadcastRobotData() {
     try {
-      const robots = await this.robotModel.find().exec();
+      const robots = await this.robotsService.findAll();
       this.server.emit('robots-data', robots);
     } catch (error) {
       console.error('Error broadcasting robot data:', error);

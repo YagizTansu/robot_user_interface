@@ -94,8 +94,7 @@ interface PolygonCreationMode {
 const RobotMap: React.FC<RobotMapProps> = ({ 
   mapImagePath = '/maps/aws_warehouse.svg',
   robots = [],
-  coordinateSystem = { type: 'coordinate' },
-  robotSvgPath = '/robots/boa.svg',
+  robotSvgPath = '/robots/robot.svg',
   enablePolygonDrawing = false,
   restrictedAreas = [],
   onRestrictedAreasChange,
@@ -183,8 +182,14 @@ const RobotMap: React.FC<RobotMapProps> = ({
     // ROS'ta Y ekseni yukarı, image'lerde Y ekseni aşağı
     const imageY = mapMetadata.height - pixelY;
     
-    // Debug log
-    console.log(`ROS(${rosX.toFixed(2)}, ${rosY.toFixed(2)}) -> Pixel(${pixelX.toFixed(1)}, ${imageY.toFixed(1)})`);
+    // Debug log - daha detaylı bilgi
+    console.log(`ROS->Pixel Conversion:
+      Input ROS: (${rosX.toFixed(2)}, ${rosY.toFixed(2)})
+      Map Origin: (${mapMetadata.origin.x}, ${mapMetadata.origin.y})
+      Resolution: ${mapMetadata.resolution} m/px
+      Map Size: ${mapMetadata.width}x${mapMetadata.height} px
+      Calculated pixel: (${pixelX.toFixed(1)}, ${pixelY.toFixed(1)})
+      Final image coords: (${pixelX.toFixed(1)}, ${imageY.toFixed(1)})`);
     
     return {
       x: pixelX,
@@ -699,6 +704,102 @@ const RobotMap: React.FC<RobotMapProps> = ({
                 </g>
               );
             })}
+
+            {/* Render all robots inside SVG */}
+            {robots.map((robot) => {
+              const robotPos = convertToPixel(robot.position);
+              
+              // Debug: Robot pozisyonları
+              console.log(`Robot ${robot.id} positioning:
+                Original position: (${robot.position.x}, ${robot.position.y})
+                Converted pixel: (${robotPos.x.toFixed(1)}, ${robotPos.y.toFixed(1)})
+                SVG dimensions: ${svgDimensions.width}x${svgDimensions.height}`);
+              
+              // Robot gerçek boyutları: 100cm x 80cm
+              const robotRealWidth = 1.0; // 100cm = 1.0m
+              const robotRealHeight = 0.8; // 80cm = 0.8m
+              
+              // Map metadata varsa gerçek boyutları pixel'e çevir
+              let robotPixelWidth = 50; // Default fallback
+              let robotPixelHeight = 40; // Default fallback
+              
+              if (mapMetadata) {
+                robotPixelWidth = robotRealWidth / mapMetadata.resolution;
+                robotPixelHeight = robotRealHeight / mapMetadata.resolution;
+                
+                // Minimum boyut kontrolü (çok küçük görünmesin)
+                robotPixelWidth = Math.max(robotPixelWidth, 20);
+                robotPixelHeight = Math.max(robotPixelHeight, 16);
+                
+                // Maximum boyut kontrolü (çok büyük görünmesin)
+                robotPixelWidth = Math.min(robotPixelWidth, 80);
+                robotPixelHeight = Math.min(robotPixelHeight, 64);
+              }
+              
+              const halfWidth = robotPixelWidth / 2;
+              const halfHeight = robotPixelHeight / 2;
+              
+              return (
+                <g 
+                  key={`robot-${robot.id}`} 
+                  transform={`translate(${robotPos.x}, ${robotPos.y}) rotate(${robot.orientation})`}
+                  style={{ cursor: 'pointer' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedRobotId(selectedRobotId === robot.id ? null : robot.id);
+                  }}
+                >
+                  {/* Robot image using foreignObject */}
+                  <foreignObject 
+                    x={-halfWidth} 
+                    y={-halfHeight} 
+                    width={robotPixelWidth} 
+                    height={robotPixelHeight}
+                    style={{ overflow: 'visible' }}
+                  >
+                    <img 
+                      src={robotSvgPath}
+                      alt={`Robot ${robot.id}`}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.3))',
+                        pointerEvents: 'none',
+                        overflow: 'visible',
+                        objectFit: 'contain'
+                      }}
+                    />
+                  </foreignObject>
+                  
+                  {/* Robot label */}
+                  <foreignObject 
+                    x={-halfWidth-4} 
+                    y={-halfHeight + 4} 
+                    width={robotPixelWidth} 
+                    height="14"
+                    style={{ overflow: 'visible' }}
+                  >
+                    <div
+                      style={{
+                        background: 'rgba(0, 0, 0, 0.75)',
+                        color: 'white',
+                        padding: '1px 3px',
+                        borderRadius: '3px',
+                        fontSize: '4px',
+                        fontWeight: '500',
+                        textAlign: 'center',
+                        whiteSpace: 'nowrap',
+                        pointerEvents: 'none',
+                        transform: 'rotate(90deg)',
+                        transformOrigin: 'center center'
+                      }}
+                    >
+                      {robot.id}
+                    </div>
+                  </foreignObject>
+                </g>
+              );
+            })}
             
             {/* Preview rectangle while creating */}
             {polygonMode.isActive && polygonMode.startPoint && (
@@ -732,58 +833,6 @@ const RobotMap: React.FC<RobotMapProps> = ({
               })()
             )}
           </svg>
-
-          {/* Render all robots */}
-          {robots.map((robot) => {
-            const robotPos = convertToPixel(robot.position);
-            // Pixel koordinatlarını percentage'e çevir (sadece positioning için)
-            const leftPercent = (robotPos.x / svgDimensions.width) * 100;
-            const topPercent = (robotPos.y / svgDimensions.height) * 100;
-            
-            return (
-              <div
-                key={robot.id}
-                style={{
-                  position: 'absolute',
-                  left: `${leftPercent}%`,
-                  top: `${topPercent}%`,
-                  transform: `translate(-50%, -50%) rotate(${robot.orientation}deg)`,
-                  zIndex: 10,
-                  cursor: 'pointer',
-                  pointerEvents: 'auto'
-                }}
-                onClick={() => setSelectedRobotId(selectedRobotId === robot.id ? null : robot.id)}
-              >
-                <img 
-                  src={robotSvgPath}
-                  alt={`Robot ${robot.id}`}
-                  style={{
-                    width: '70px',
-                    height: '70px',
-                    filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.3))',
-                    transition: 'all 0.3s ease'
-                  }}
-                />
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '-30px',
-                    left: '50%',
-                    transform: `translateX(-50%) rotate(-${robot.orientation}deg)`,
-                    background: 'rgba(0, 0, 0, 0.8)',
-                    color: 'white',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    fontWeight: '500',
-                    whiteSpace: 'nowrap'
-                  }}
-                >
-                  {robot.id}
-                </div>
-              </div>
-            );
-          })}
         </div>
       </div>
 

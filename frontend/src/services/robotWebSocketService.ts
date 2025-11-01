@@ -69,6 +69,16 @@ class RobotWebSocketService {
     // Robot verilerini dinle
     this.socket.on('robots-data', (robots: Robot[]) => {
       console.log('Received robot data via WebSocket:', robots.length, 'robots');
+      
+      // Debug: Robot pozisyonlarını logla
+      robots.forEach(robot => {
+        console.log(`Robot ${robot.id} from backend:`, {
+          position: robot.position,
+          orientation: robot.orientation,
+          status: robot.status
+        });
+      });
+      
       onRobotsData(robots);
     });
 

@@ -1,55 +1,61 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
-export type RobotDocument = Robot & Document;
+export type RobotPoseDocument = RobotPose & Document;
 
-@Schema({ timestamps: true })
-export class Robot {
-  @Prop({ required: true, unique: true })
-  id: string;
-
+@Schema({ collection: 'robots_pose', timestamps: false })
+export class RobotPose {
   @Prop({ required: true })
-  name: string;
-
-  @Prop({ required: true, enum: ['Active', 'Idle', 'Charging', 'Maintenance', 'Error'] })
-  status: string;
-
-  @Prop({ required: true, min: 0, max: 100 })
-  battery: number;
+  robot_name: string;
 
   @Prop({ type: Object, required: true })
-  position: {
-    x: number;
-    y: number;
+  header: {
+    stamp: {
+      sec: number;
+      nanosec: number;
+    };
+    frame_id: string;
   };
 
-  @Prop({ default: 0 })
+  @Prop({ type: Object, required: true })
+  pose: {
+    pose: {
+      position: {
+        x: number;
+        y: number;
+        z: number;
+      };
+      orientation: {
+        x: number;
+        y: number;
+        z: number;
+        w: number;
+      };
+    };
+  };
+
+  @Prop({ required: true })
+  timestamp: number;
+}
+
+export const RobotPoseSchema = SchemaFactory.createForClass(RobotPose);
+
+// Backward compatibility için eski Robot interface'ini koruyoruz (frontend için)
+export interface Robot {
+  id: string;
+  name: string;
+  status: string;
+  battery: number;
+  position: { x: number; y: number };
   orientation: number;
-
-  @Prop()
-  currentTask?: string;
-
-  @Prop({ default: 0 })
+  currentTask: string;
   speed: number;
-
-  @Prop({ default: 25 })
   temperature: number;
-
-  @Prop({ default: '/robots/boa.svg' })
-  svgPath: string;
-
-  @Prop({ default: true })
-  isActive: boolean;
-
-  @Prop()
-  lastSeen?: Date;
-
-  @Prop({ type: Object })
-  capabilities?: {
+  capabilities: {
     maxSpeed: number;
     maxPayload: number;
     sensors: string[];
   };
 }
 
-export const RobotSchema = SchemaFactory.createForClass(Robot);
+export type RobotDocument = Robot & Document;

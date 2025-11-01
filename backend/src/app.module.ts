@@ -7,7 +7,7 @@ import { RobotsModule } from './robots/robots.module';
 
 @Module({
   imports: [
-    MongooseModule.forRoot('mongodb://localhost:27017/advoard_db'),
+    MongooseModule.forRoot('mongodb://localhost:27017/robot_database'),
     UsersModule, 
     RobotsModule
   ],

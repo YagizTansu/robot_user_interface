@@ -11,9 +11,9 @@ export class RobotsController {
     return this.robotsService.findAll();
   }
 
-  @Get(':id')
-  async findOne(@Param('id') id: string): Promise<Robot> {
-    const robot = await this.robotsService.findOne(id);
+  @Get(':robotName')
+  async findOne(@Param('robotName') robotName: string): Promise<Robot> {
+    const robot = await this.robotsService.findOne(robotName);
     if (!robot) {
       throw new HttpException('Robot not found', HttpStatus.NOT_FOUND);
     }
@@ -25,42 +25,42 @@ export class RobotsController {
     return this.robotsService.create(robotData);
   }
 
-  @Put(':id')
-  async update(@Param('id') id: string, @Body() robotData: Partial<Robot>): Promise<Robot> {
-    const robot = await this.robotsService.update(id, robotData);
+  @Put(':robotName')
+  async update(@Param('robotName') robotName: string, @Body() robotData: Partial<Robot>): Promise<Robot> {
+    const robot = await this.robotsService.update(robotName, robotData);
     if (!robot) {
       throw new HttpException('Robot not found', HttpStatus.NOT_FOUND);
     }
     return robot;
   }
 
-  @Put(':id/position')
+  @Put(':robotName/position')
   async updatePosition(
-    @Param('id') id: string,
-    @Body() position: { x: number; y: number }
+    @Param('robotName') robotName: string,
+    @Body() positionData: { x: number; y: number; orientation?: number }
   ): Promise<Robot> {
-    const robot = await this.robotsService.updatePosition(id, position);
+    const robot = await this.robotsService.updatePosition(robotName, positionData, positionData.orientation);
     if (!robot) {
       throw new HttpException('Robot not found', HttpStatus.NOT_FOUND);
     }
     return robot;
   }
 
-  @Put(':id/status')
+  @Put(':robotName/status')
   async updateStatus(
-    @Param('id') id: string,
+    @Param('robotName') robotName: string,
     @Body() status: { status: string }
   ): Promise<Robot> {
-    const robot = await this.robotsService.updateStatus(id, status.status);
+    const robot = await this.robotsService.updateStatus(robotName, status.status);
     if (!robot) {
       throw new HttpException('Robot not found', HttpStatus.NOT_FOUND);
     }
     return robot;
   }
 
-  @Delete(':id')
-  async delete(@Param('id') id: string): Promise<{ message: string }> {
-    await this.robotsService.delete(id);
+  @Delete(':robotName')
+  async delete(@Param('robotName') robotName: string): Promise<{ message: string }> {
+    await this.robotsService.delete(robotName);
     return { message: 'Robot deleted successfully' };
   }
 
