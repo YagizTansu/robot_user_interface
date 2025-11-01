@@ -1,0 +1,52 @@
+/* Charts Styles */
+.chart-placeholder {
+  padding: 20px 0;
+  height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Bar Chart */
+.bar-chart {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  height: 100px;
+  width: 100%;
+  padding: 0 20px;
+}
+
+.chart-bar {
+  flex: 1;
+  min-height: 10px;
+  border-radius: 2px 2px 0 0;
+  transition: all 0.3s ease;
+}
+
+.chart-bar:hover {
+  opacity: 0.8;
+}
+
+/* Line Chart */
+.line-chart {
+  width: 100%;
+  height: 120px;
+}
+
+.distance-info {
+  position: absolute;
+  top: 50px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.distance-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.total-distance .chart-placeholder {
+  position: relative;
+}

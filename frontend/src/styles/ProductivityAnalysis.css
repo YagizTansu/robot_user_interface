@@ -1,0 +1,43 @@
+/* Productivity Analysis Styles */
+.chart-container {
+  padding: 20px 0;
+}
+
+.pie-chart {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 300px;
+}
+
+.chart-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #374151;
+}
+
+.legend-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.legend-color.busy { background-color: #10b981; }
+.legend-color.charge { background-color: #3b82f6; }
+.legend-color.waiting-order { background-color: #f59e0b; }
+.legend-color.waiting-signal { background-color: #8b5cf6; }
+.legend-color.productive { background-color: #06b6d4; }
+.legend-color.obstruction { background-color: #ef4444; }
+.legend-color.unknown { background-color: #f97316; }
+.legend-color.process { background-color: #84cc16; }
+.legend-color.manual { background-color: #ec4899; }
+.legend-color.switched { background-color: #6b7280; }

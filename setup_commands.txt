@@ -1,0 +1,49 @@
+# 1. MongoDB durumunu kontrol et
+sudo systemctl status mongod
+mongosh --eval "db.adminCommand('ping')"
+
+# 2. MongoDB'yi durdur
+sudo systemctl stop mongod
+
+# 3. Config dosyasını yedekle
+sudo cp /etc/mongod.conf /etc/mongod.conf.backup
+
+# 4. Config dosyasını düzenle
+sudo nano /etc/mongod.conf
+
+# Dosyanın sonuna ekle:
+# replication:
+#   replSetName: "rs0"
+
+# 5. MongoDB'yi yeniden başlat
+sudo systemctl start mongod
+sudo systemctl status mongod
+
+# 6. MongoDB shell'e bağlan ve replica set'i başlat
+mongosh
+
+# MongoDB shell içinde:
+rs.initiate({
+  _id: "rs0",
+  members: [
+    { _id: 0, host: "localhost:27017" }
+  ]
+})
+
+# Durumu kontrol et
+rs.status()
+rs.isMaster()
+
+# Shell'den çık
+exit
+
+# 7. Backend'i test et
+cd /home/yagiz/Desktop/advobot_user_interface/backend
+npm run start:dev
+
+# Log'da "MongoDB Change Streams initialized" mesajını görmeli
+# "Change stream error" OLMAMALI
+
+# 8. Sorun çıkarsa config'i geri al
+# sudo cp /etc/mongod.conf.backup /etc/mongod.conf
+# sudo systemctl restart mongod
