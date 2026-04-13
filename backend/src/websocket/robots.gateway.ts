@@ -14,7 +14,7 @@ import { RobotsService } from '../robots/robots.service';
 @Injectable()
 @WebSocketGateway({
   cors: {
-    origin: ['http://localhost:3000', 'http://localhost:5173'],
+    origin: true, // Yerel ağdaki tüm cihazlardan erişime izin ver
     credentials: true,
   },
 })

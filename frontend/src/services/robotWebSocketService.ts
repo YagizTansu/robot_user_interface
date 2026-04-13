@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { BACKEND_URL } from '../config';
 
 interface Robot {
   id: string;
@@ -39,7 +40,7 @@ class RobotWebSocketService {
     }
 
     console.log('Connecting to WebSocket...');
-    this.socket = io('http://localhost:3000', {
+    this.socket = io(BACKEND_URL, {
       transports: ['websocket'],
       upgrade: true,
       autoConnect: true,

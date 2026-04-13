@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import '../styles/RobotMap.css';
+import { BACKEND_URL } from '../config';
 
 interface Robot {
   id: string;
@@ -174,7 +175,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
   useEffect(() => {
     const loadProhibitedZones = async () => {
       try {
-        const response = await fetch('http://localhost:3000/zones');
+        const response = await fetch(`${BACKEND_URL}/zones`);
         if (response.ok) {
           const zones: ProhibitedZone[] = await response.json();
           console.log('Prohibited zones loaded:', zones);
@@ -364,7 +365,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
     // Polygon tipindeki alanları veritabanına kaydet
     if (area.type === 'polygon' && area.polygonPoints && area.polygonPoints.length > 0) {
       try {
-        const response = await fetch('http://localhost:3000/zones', {
+        const response = await fetch(`${BACKEND_URL}/zones`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -393,7 +394,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
 
   const deleteAreaFromDatabase = async (areaId: string) => {
     try {
-      const response = await fetch(`http://localhost:3000/zones/${areaId}`, {
+      const response = await fetch(`${BACKEND_URL}/zones/${areaId}`, {
         method: 'DELETE',
       });
 

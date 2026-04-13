@@ -6,7 +6,7 @@ async function bootstrap() {
   
   // Enable CORS for frontend communication
   app.enableCors({
-    origin: 'http://localhost:5173', // Vite dev server
+    origin: true, // Yerel ağdaki tüm cihazlardan erişime izin ver
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
