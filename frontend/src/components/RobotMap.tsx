@@ -103,7 +103,7 @@ interface PolygonCreationMode {
 }
 
 const RobotMap: React.FC<RobotMapProps> = ({ 
-  mapImagePath = '/maps/aws_warehouse.svg',
+  mapImagePath = '/maps/map_edited.svg',
   robots = [],
   robotSvgPath = '/robots/robot.svg',
   enablePolygonDrawing = false,

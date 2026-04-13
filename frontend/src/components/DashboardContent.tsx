@@ -81,14 +81,14 @@ function DashboardContent() {
   // ROS map metadata - YAML dosyanızdan gelen değerler
   // Bu değerleri YAML dosyanızdan okuyarak güncelleyin
   const mapMetadata: MapMetadata = {
-    resolution: 0.05,  // meter/pixel - YAML'daki resolution değeri
+    resolution: 0.050,  // meter/pixel - YAML'daki resolution değeri
     origin: {
-      x: -7.61,  // meter - YAML'daki origin x değeri
-      y: -10.6,  // meter - YAML'daki origin y değeri
-      theta: 0.0  // radyan - YAML'daki origin theta değeri
+      x: -25.592,  // meter - YAML'daki origin x değeri
+      y: -24.915,  // meter - YAML'daki origin y değeri
+      theta: 0.0   // radyan - YAML'daki origin theta değeri
     },
-    width: 293,  // pixel - PGM dosyasının genişliği
-    height: 429  // pixel - PGM dosyasının yüksekliği
+    width: 1013,  // pixel - map_edited.pgm genişliği
+    height: 1002  // pixel - map_edited.pgm yüksekliği
   };
 
   // Graph data'yı JSON dosyasından yükle
@@ -250,6 +250,7 @@ function DashboardContent() {
       <div className="map-container">
         <div className="map-wrapper">
           <RobotMap 
+            mapImagePath="/maps/map_edited.svg"
             robots={robotsWithFullData}
             coordinateSystem={{ 
               type: 'coordinate'

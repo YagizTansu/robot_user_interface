@@ -59,14 +59,14 @@ function GraphEditor() {
 
   // ROS map metadata
   const mapMetadata: MapMetadata = {
-    resolution: 0.05,
+    resolution: 0.050,
     origin: {
-      x: -7.61,
-      y: -10.6,
+      x: -25.592,
+      y: -24.915,
       theta: 0.0
     },
-    width: 293,
-    height: 429
+    width: 1013,
+    height: 1002
   };
 
   // Graph data'yı JSON dosyasından yükle
@@ -241,6 +241,7 @@ function GraphEditor() {
       <div className="map-container">
         <div className="map-wrapper">
           <RobotMap 
+            mapImagePath="/maps/map_edited.svg"
             robots={[]}
             coordinateSystem={{ 
               type: 'coordinate'
