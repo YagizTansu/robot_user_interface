@@ -1,15 +1,7 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { RobotsService } from './robots/robots.service';
+import { Injectable } from '@nestjs/common';
 
 @Injectable()
-export class AppService implements OnModuleInit {
-  constructor(private readonly robotsService: RobotsService) {}
-
-  async onModuleInit() {
-    // Uygulama başladığında seed data'yı çalıştır
-    await this.robotsService.seedData();
-  }
-
+export class AppService {
   getHello(): string {
     return 'Hello World!';
   }

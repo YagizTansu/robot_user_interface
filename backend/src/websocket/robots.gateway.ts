@@ -67,7 +67,6 @@ export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // MongoDB Change Streams'i robots_pose koleksiyonu için başlat
       this.changeStream = this.robotPoseModel.watch([], {
         fullDocument: 'updateLookup',
-        fullDocumentBeforeChange: 'whenAvailable'
       });
 
       this.changeStream.on('change', async (change) => {

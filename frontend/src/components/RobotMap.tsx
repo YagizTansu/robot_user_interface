@@ -14,19 +14,17 @@ interface Robot {
   temperature?: number;
 }
 
-interface MapMetadata {
-  resolution: number;  // meter/pixel
-  origin: {
-    x: number;  // meter
-    y: number;  // meter
-    theta: number;  // radyan
-  };
-  width: number;  // pixel
-  height: number;  // pixel
+interface MapData {
+  map_name: string;
+  image_png_base64: string;
+  width_px: number;
+  height_px: number;
+  resolution: number;
+  origin: number[]; // [x, y, theta]
 }
 
 interface RobotMapProps {
-  mapImagePath?: string;
+  robotName?: string;
   robots?: Robot[];
   coordinateSystem?: {
     type: 'percentage' | 'coordinate';
@@ -39,7 +37,6 @@ interface RobotMapProps {
   onRestrictedAreasChange?: (areas: RestrictedArea[]) => void;
   graphData?: GraphData;
   showGraph?: boolean;
-  mapMetadata?: MapMetadata;  // ROS map metadata
   // Graph editing props
   isGraphEditorMode?: boolean;
   onGraphDataChange?: (data: GraphData) => void;
@@ -104,7 +101,7 @@ interface PolygonCreationMode {
 }
 
 const RobotMap: React.FC<RobotMapProps> = ({ 
-  mapImagePath = '/maps/map_edited.svg',
+  robotName,
   robots = [],
   robotSvgPath = '/robots/robot.svg',
   enablePolygonDrawing = false,
@@ -112,7 +109,6 @@ const RobotMap: React.FC<RobotMapProps> = ({
   onRestrictedAreasChange,
   graphData,
   showGraph = true,
-  mapMetadata,
   // Graph editing props
   isGraphEditorMode = false,
   onGraphDataChange,
@@ -131,45 +127,35 @@ const RobotMap: React.FC<RobotMapProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   
+  // Dynamic map data from backend
+  const [mapData, setMapData] = useState<MapData | null>(null);
+  
   // Polygon creation states
   const [polygonMode, setPolygonMode] = useState<PolygonCreationMode>({ isActive: false, type: 'restricted' });
   const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
   const [mousePosition, setMousePosition] = useState<Point>({ x: 0, y: 0 });
-  const [svgDimensions, setSvgDimensions] = useState<{ width: number; height: number }>({ width: 100, height: 100 });
 
-  // SVG boyutlarını otomatik oku
+  // Fetch map data from backend
   useEffect(() => {
-    const loadSvgDimensions = async () => {
+    if (!robotName) return;
+
+    const fetchMap = async () => {
       try {
-        const response = await fetch(mapImagePath);
-        const svgText = await response.text();
-        const parser = new DOMParser();
-        const svgDoc = parser.parseFromString(svgText, 'image/svg+xml');
-        const svgElement = svgDoc.querySelector('svg');
-        
-        if (svgElement) {
-          const viewBox = svgElement.getAttribute('viewBox');
-          if (viewBox) {
-            const [, , width, height] = viewBox.split(' ').map(Number);
-            setSvgDimensions({ width, height });
-            console.log(`SVG dimensions detected: ${width}x${height}`);
-          } else {
-            // viewBox yoksa width/height attribute'lerini kontrol et
-            const width = parseFloat(svgElement.getAttribute('width') || '100');
-            const height = parseFloat(svgElement.getAttribute('height') || '100');
-            setSvgDimensions({ width, height });
-            console.log(`SVG dimensions from attributes: ${width}x${height}`);
-          }
+        const response = await fetch(`${BACKEND_URL}/maps/by-robot/${robotName}`);
+        if (response.ok) {
+          const data: MapData = await response.json();
+          setMapData(data);
+          console.log(`Map loaded for robot ${robotName}: ${data.map_name} (${data.width_px}x${data.height_px})`);
+        } else {
+          console.error(`Failed to load map for robot: ${robotName}`);
         }
       } catch (error) {
-        console.error('Error loading SVG dimensions:', error);
-        // Hata durumunda default değerleri kullan
-        setSvgDimensions({ width: 100, height: 100 });
+        console.error('Error fetching map data:', error);
       }
     };
 
-    loadSvgDimensions();
-  }, [mapImagePath]);
+    fetchMap();
+  }, [robotName]);
 
   // Prohibited zones'ları yükle ve restrictedAreas'a ekle
   useEffect(() => {
@@ -206,41 +192,26 @@ const RobotMap: React.FC<RobotMapProps> = ({
   }, []);
 
   const convertToPixel = (position: { x: number; y: number }) => {
-    // ROS koordinatlarını direkt pixel'e çeviriyoruz
-    if (mapMetadata) {
+    if (mapData) {
       return convertRosToPixel(position.x, position.y);
     }
-    
-    // Fallback: Direkt coordinate kullan
     return position;
   };
 
   // ROS koordinatlarını pixel koordinatlarına dönüştür
   const convertRosToPixel = (rosX: number, rosY: number) => {
-    if (!mapMetadata) {
-      return { x: svgDimensions.width / 2, y: svgDimensions.height / 2 }; // Fallback to center
+    if (!mapData) {
+      return { x: 0, y: 0 };
     }
-
-    // ROS koordinatlarını pixel koordinatlarına dönüştür
-    const pixelX = (rosX - mapMetadata.origin.x) / mapMetadata.resolution;
-    const pixelY = (rosY - mapMetadata.origin.y) / mapMetadata.resolution;
-    
-    // ROS'ta Y ekseni yukarı, image'lerde Y ekseni aşağı
-    const imageY = mapMetadata.height - pixelY;
-    
-    return {
-      x: pixelX,
-      y: imageY
-    };
+    const pixelX = (rosX - mapData.origin[0]) / mapData.resolution;
+    const pixelY = mapData.height_px - (rosY - mapData.origin[1]) / mapData.resolution;
+    return { x: pixelX, y: pixelY };
   };
 
   const convertGraphNodeToPixel = (node: GraphNode) => {
-    // Graph node'ları için de direkt pixel koordinatları kullan
-    if (mapMetadata) {
+    if (mapData) {
       return convertRosToPixel(node.x, node.y);
     }
-    
-    // Fallback: Direkt coordinate kullan
     return { x: node.x, y: node.y };
   };
 
@@ -275,7 +246,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
 
   const handleMouseMove = (e: React.MouseEvent) => {
     // Node sürükleme
-    if (draggingNodeId && graphData && onGraphDataChange && mapMetadata && dragOffset) {
+    if (draggingNodeId && graphData && onGraphDataChange && mapData && dragOffset) {
       const svg = e.currentTarget.querySelector('svg');
       if (!svg) return;
       
@@ -286,9 +257,8 @@ const RobotMap: React.FC<RobotMapProps> = ({
       const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
       
       // SVG koordinatlarını ROS koordinatlarına çevir
-      const rosY = mapMetadata.height - svgP.y;
-      const rosX = (svgP.x * mapMetadata.resolution) + mapMetadata.origin.x;
-      const rosYCoord = (rosY * mapMetadata.resolution) + mapMetadata.origin.y;
+      const rosX = svgP.x * mapData.resolution + mapData.origin[0];
+      const rosYCoord = (mapData.height_px - svgP.y) * mapData.resolution + mapData.origin[1];
       
       // Node pozisyonunu güncelle
       const updatedNodes = graphData.nodes.map(n => 
@@ -305,7 +275,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
       return;
     }
     
-    if (polygonMode.isActive && polygonMode.startPoint) {
+    if (polygonMode.isActive && polygonMode.startPoint && mapData) {
       const svg = e.currentTarget.querySelector('svg');
       if (!svg) return;
       
@@ -316,14 +286,9 @@ const RobotMap: React.FC<RobotMapProps> = ({
       
       const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
       
-      // SVG viewBox'tan gerçek boyutları al
-      const viewBox = svg.viewBox.baseVal;
-      const actualWidth = viewBox.width || svgDimensions.width;
-      const actualHeight = viewBox.height || svgDimensions.height;
-      
       // SVG koordinatlarını yüzde değerine çevir
-      const x = (svgP.x / actualWidth) * 100;
-      const y = (svgP.y / actualHeight) * 100;
+      const x = (svgP.x / mapData.width_px) * 100;
+      const y = (svgP.y / mapData.height_px) * 100;
       
       setMousePosition({ 
         x: Math.max(0, Math.min(100, x)), 
@@ -525,56 +490,33 @@ const RobotMap: React.FC<RobotMapProps> = ({
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
         >
-          <img 
-            src={mapImagePath}
-            alt="Warehouse Map"
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'fill',
-              borderRadius: '12px',
-              userSelect: 'none'
-            }}
-          />
-
-          {/* SVG overlay for polygons and graph */}
+          {/* Single SVG: base map + all overlays. preserveAspectRatio keeps correct proportions. */}
           <svg
-            viewBox={`0 0 ${svgDimensions.width} ${svgDimensions.height}`}
+            viewBox={mapData ? `0 0 ${mapData.width_px} ${mapData.height_px}` : '0 0 100 100'}
+            preserveAspectRatio="xMidYMid meet"
             style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
               width: '100%',
               height: '100%',
+              display: 'block',
+              borderRadius: '12px',
               pointerEvents: (isGraphEditorMode && isAddingNode) || polygonMode.isActive ? 'auto' : 'none',
-              zIndex: 5,
               cursor: (isGraphEditorMode && isAddingNode) || polygonMode.isActive ? 'crosshair' : 'default'
             }}
             onClick={(e) => {
+              if (!mapData) return;
+
               // Polygon drawing mode
               if (polygonMode.isActive) {
                 const svg = e.currentTarget;
                 
-                // SVG koordinat sisteminde tıklanan noktayı al
                 const pt = svg.createSVGPoint();
                 pt.x = e.clientX;
                 pt.y = e.clientY;
-                
-                // Screen koordinatlarını SVG koordinatlarına çevir
                 const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
                 
-                // SVG viewBox'tan gerçek boyutları al
-                const viewBox = svg.viewBox.baseVal;
-                const actualWidth = viewBox.width || svgDimensions.width;
-                const actualHeight = viewBox.height || svgDimensions.height;
-                
                 // SVG koordinatlarını yüzde değerine çevir
-                const x = (svgP.x / actualWidth) * 100;
-                const y = (svgP.y / actualHeight) * 100;
-                
-                console.log('Polygon Click - SVG:', { x: svgP.x.toFixed(1), y: svgP.y.toFixed(1) }, 
-                           'ViewBox:', { width: actualWidth, height: actualHeight },
-                           'Percent:', { x: x.toFixed(2), y: y.toFixed(2) });
+                const x = (svgP.x / mapData.width_px) * 100;
+                const y = (svgP.y / mapData.height_px) * 100;
                 
                 const clickPoint = { 
                   x: Math.max(0, Math.min(100, x)), 
@@ -584,74 +526,58 @@ const RobotMap: React.FC<RobotMapProps> = ({
                 if (!polygonMode.startPoint) {
                   setPolygonMode(prev => ({ ...prev, startPoint: clickPoint }));
                 } else {
-                  // Rectangle köşe noktalarını ROS koordinatlarına çevir
-                  let rosCoordinates: number[] = [];
+                  // Yüzde değerlerini SVG pixel koordinatlarına çevir
+                  const startX = (polygonMode.startPoint.x / 100) * mapData.width_px;
+                  const startY = (polygonMode.startPoint.y / 100) * mapData.height_px;
+                  const endX = (clickPoint.x / 100) * mapData.width_px;
+                  const endY = (clickPoint.y / 100) * mapData.height_px;
                   
-                  if (mapMetadata) {
-                    // Yüzde değerlerini SVG pixel koordinatlarına çevir
-                    const startX = (polygonMode.startPoint.x / 100) * actualWidth;
-                    const startY = (polygonMode.startPoint.y / 100) * actualHeight;
-                    const endX = (clickPoint.x / 100) * actualWidth;
-                    const endY = (clickPoint.y / 100) * actualHeight;
-                    
-                    // Rectangle'ın 4 köşe noktasını hesapla (saat yönünde)
-                    const corners = [
-                      { x: Math.min(startX, endX), y: Math.min(startY, endY) }, // Sol üst
-                      { x: Math.max(startX, endX), y: Math.min(startY, endY) }, // Sağ üst
-                      { x: Math.max(startX, endX), y: Math.max(startY, endY) }, // Sağ alt
-                      { x: Math.min(startX, endX), y: Math.max(startY, endY) }, // Sol alt
-                    ];
-                    
-                    // Her köşe noktasını ROS koordinatlarına çevir
-                    corners.forEach(corner => {
-                      const rosY = mapMetadata.height - corner.y;
-                      const rosX = (corner.x * mapMetadata.resolution) + mapMetadata.origin.x;
-                      const rosYCoord = (rosY * mapMetadata.resolution) + mapMetadata.origin.y;
-                      rosCoordinates.push(parseFloat(rosX.toFixed(2)), parseFloat(rosYCoord.toFixed(2)));
-                    });
-                    
-                    console.log('ROS Coordinates:', rosCoordinates);
-                  }
+                  // Rectangle'ın 4 köşe noktasını hesapla (saat yönünde)
+                  const corners = [
+                    { x: Math.min(startX, endX), y: Math.min(startY, endY) },
+                    { x: Math.max(startX, endX), y: Math.min(startY, endY) },
+                    { x: Math.max(startX, endX), y: Math.max(startY, endY) },
+                    { x: Math.min(startX, endX), y: Math.max(startY, endY) },
+                  ];
+                  
+                  // Her köşe noktasını ROS koordinatlarına çevir
+                  const rosCoordinates: number[] = [];
+                  corners.forEach(corner => {
+                    const rosX = corner.x * mapData.resolution + mapData.origin[0];
+                    const rosYCoord = (mapData.height_px - corner.y) * mapData.resolution + mapData.origin[1];
+                    rosCoordinates.push(parseFloat(rosX.toFixed(2)), parseFloat(rosYCoord.toFixed(2)));
+                  });
                   
                   const newArea: RestrictedArea = {
                     id: `area-${Date.now()}`,
                     name: `${polygonMode.type === 'restricted' ? 'Restricted' : 'Docking'} Area ${restrictedAreas.length + 1}`,
                     startPoint: polygonMode.startPoint,
                     endPoint: clickPoint,
-                    polygonPoints: rosCoordinates.length > 0 ? rosCoordinates : undefined,
+                    polygonPoints: rosCoordinates,
                     color: polygonMode.type === 'restricted' ? '#ef4444' : '#3b82f6',
                     type: 'polygon',
-                    robotName: 'agv001'
+                    robotName: robotName || 'agv001'
                   };
                   
-                  // Veritabanına kaydet
-                  if (rosCoordinates.length > 0) {
-                    saveAreaToDatabase(newArea);
-                  }
-                  
-                  const updatedAreas = [...restrictedAreas, newArea];
-                  onRestrictedAreasChange?.(updatedAreas);
+                  saveAreaToDatabase(newArea);
+                  onRestrictedAreasChange?.([...restrictedAreas, newArea]);
                   stopPolygonCreation();
                 }
                 return;
               }
               
               // Graph editor mode - SVG içinde node ekleme
-              if (isGraphEditorMode && isAddingNode && graphData && onGraphDataChange && mapMetadata) {
+              if (isGraphEditorMode && isAddingNode && graphData && onGraphDataChange) {
                 const svg = e.currentTarget;
                 
-                // SVG koordinat sisteminde tıklanan noktayı al
                 const pt = svg.createSVGPoint();
                 pt.x = e.clientX;
                 pt.y = e.clientY;
-                
-                // Screen koordinatlarını SVG koordinatlarına çevir
                 const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
                 
                 // SVG koordinatlarını ROS koordinatlarına çevir
-                const rosY = mapMetadata.height - svgP.y;
-                const rosX = (svgP.x * mapMetadata.resolution) + mapMetadata.origin.x;
-                const rosYCoord = (rosY * mapMetadata.resolution) + mapMetadata.origin.y;
+                const rosX = svgP.x * mapData.resolution + mapData.origin[0];
+                const rosYCoord = (mapData.height_px - svgP.y) * mapData.resolution + mapData.origin[1];
                 
                 // Yeni node oluştur
                 const newNode: GraphNode = {
@@ -673,6 +599,16 @@ const RobotMap: React.FC<RobotMapProps> = ({
               }
             }}
           >
+            {/* Base map image */}
+            {mapData && (
+              <image
+                href={`data:image/png;base64,${mapData.image_png_base64}`}
+                x={0}
+                y={0}
+                width={mapData.width_px}
+                height={mapData.height_px}
+              />
+            )}
             {/* Render graph edges (paths) first so they appear behind nodes */}
             {showGraph && graphData?.edges.map((edge, index) => {
               const fromNode = graphData.nodes.find(n => n.id === edge.from);
@@ -829,7 +765,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
                       const x = val;
                       const y = area.polygonPoints![idx + 1];
                       // ROS koordinatlarını pixel'e çevir
-                      if (mapMetadata) {
+                      if (mapData) {
                         const pixelPos = convertRosToPixel(x, y);
                         acc.push(`${pixelPos.x},${pixelPos.y}`);
                       } else {
@@ -860,7 +796,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
                       }}
                     />
                     {/* Zone ismi göster */}
-                    {area.polygonPoints.length >= 2 && mapMetadata && (
+                    {area.polygonPoints.length >= 2 && mapData && (
                       <text
                         x={convertRosToPixel(area.polygonPoints[0], area.polygonPoints[1]).x}
                         y={convertRosToPixel(area.polygonPoints[0], area.polygonPoints[1]).y}
@@ -927,9 +863,9 @@ const RobotMap: React.FC<RobotMapProps> = ({
               let robotPixelWidth = 50; // Default fallback
               let robotPixelHeight = 40; // Default fallback
               
-              if (mapMetadata) {
-                robotPixelWidth = robotRealWidth / mapMetadata.resolution;
-                robotPixelHeight = robotRealHeight / mapMetadata.resolution;
+              if (mapData) {
+                robotPixelWidth = robotRealWidth / mapData.resolution;
+                robotPixelHeight = robotRealHeight / mapData.resolution;
                 
                 // Minimum boyut kontrolü (çok küçük görünmesin)
                 robotPixelWidth = Math.max(robotPixelWidth, 20);
@@ -1006,12 +942,12 @@ const RobotMap: React.FC<RobotMapProps> = ({
             })}
             
             {/* Preview rectangle while creating */}
-            {polygonMode.isActive && polygonMode.startPoint && (
+            {polygonMode.isActive && polygonMode.startPoint && mapData && (
               (() => {
-                const startX = polygonMode.startPoint.x;
-                const startY = polygonMode.startPoint.y;
-                const currentX = mousePosition.x;
-                const currentY = mousePosition.y;
+                const startX = (polygonMode.startPoint.x / 100) * mapData.width_px;
+                const startY = (polygonMode.startPoint.y / 100) * mapData.height_px;
+                const currentX = (mousePosition.x / 100) * mapData.width_px;
+                const currentY = (mousePosition.y / 100) * mapData.height_px;
                 
                 const x = Math.min(startX, currentX);
                 const y = Math.min(startY, currentY);
@@ -1022,10 +958,10 @@ const RobotMap: React.FC<RobotMapProps> = ({
                 
                 return (
                   <rect
-                    x={`${x}%`}
-                    y={`${y}%`}
-                    width={`${width}%`}
-                    height={`${height}%`}
+                    x={x}
+                    y={y}
+                    width={width}
+                    height={height}
                     fill={previewColor}
                     fillOpacity="0.15"
                     stroke={previewColor}
@@ -1045,8 +981,8 @@ const RobotMap: React.FC<RobotMapProps> = ({
         if (!selectedNode) return null;
         
         const nodePos = convertGraphNodeToPixel(selectedNode);
-        const leftPercent = (nodePos.x / svgDimensions.width) * 100;
-        const topPercent = (nodePos.y / svgDimensions.height) * 100;
+        const leftPercent = (nodePos.x / (mapData?.width_px ?? 100)) * 100;
+        const topPercent = (nodePos.y / (mapData?.height_px ?? 100)) * 100;
 
         // Edit mode için
         const isEditing = editingNode?.id === selectedNode.id;
@@ -1264,8 +1200,8 @@ const RobotMap: React.FC<RobotMapProps> = ({
         if (!selectedRobot) return null;
         
         const robotPos = convertToPixel(selectedRobot.position);
-        const leftPercent = (robotPos.x / svgDimensions.width) * 100;
-        const topPercent = (robotPos.y / svgDimensions.height) * 100;
+        const leftPercent = (robotPos.x / (mapData?.width_px ?? 100)) * 100;
+        const topPercent = (robotPos.y / (mapData?.height_px ?? 100)) * 100;
 
         return (
           <div 

@@ -24,17 +24,6 @@ interface GraphData {
   edges: GraphEdge[];
 }
 
-interface MapMetadata {
-  resolution: number;
-  origin: {
-    x: number;
-    y: number;
-    theta: number;
-  };
-  width: number;
-  height: number;
-}
-
 interface Point {
   x: number;
   y: number;
@@ -43,10 +32,10 @@ interface Point {
 interface RestrictedArea {
   id: string;
   name: string;
-  startPoint: Point;
-  endPoint: Point;
+  startPoint?: Point;
+  endPoint?: Point;
   color: string;
-  type: 'restricted' | 'docking-pallet';
+  type: 'restricted' | 'docking-pallet' | 'polygon';
   isSelected?: boolean;
 }
 
@@ -56,18 +45,6 @@ function GraphEditor() {
   const [showGraph, setShowGraph] = useState(true);
   const [isAddingNode, setIsAddingNode] = useState(false);
   const [selectedNodeForEdge, setSelectedNodeForEdge] = useState<string | null>(null);
-
-  // ROS map metadata
-  const mapMetadata: MapMetadata = {
-    resolution: 0.050,
-    origin: {
-      x: -25.592,
-      y: -24.915,
-      theta: 0.0
-    },
-    width: 1013,
-    height: 1002
-  };
 
   // Graph data'yı JSON dosyasından yükle
   useEffect(() => {
@@ -241,7 +218,7 @@ function GraphEditor() {
       <div className="map-container">
         <div className="map-wrapper">
           <RobotMap 
-            mapImagePath="/maps/map_edited.svg"
+            robotName="agv001"
             robots={[]}
             coordinateSystem={{ 
               type: 'coordinate'
@@ -251,7 +228,6 @@ function GraphEditor() {
             onRestrictedAreasChange={setRestrictedAreas}
             graphData={graphData}
             showGraph={showGraph}
-            mapMetadata={mapMetadata}
             isGraphEditorMode={true}
             onGraphDataChange={setGraphData}
             isAddingNode={isAddingNode}

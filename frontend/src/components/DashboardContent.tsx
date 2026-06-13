@@ -31,7 +31,7 @@ interface RestrictedArea {
   startPoint?: Point;
   endPoint?: Point;
   color: string;
-  type: 'restricted' | 'docking-pallet';
+  type: 'restricted' | 'docking-pallet' | 'polygon';
   isSelected?: boolean;
 }
 
@@ -57,17 +57,6 @@ interface GraphData {
   edges: GraphEdge[];
 }
 
-interface MapMetadata {
-  resolution: number;  // meter/pixel
-  origin: {
-    x: number;  // meter
-    y: number;  // meter
-    theta: number;  // radyan
-  };
-  width: number;  // pixel
-  height: number;  // pixel
-}
-
 function DashboardContent() {
   const [robots, setRobots] = useState<Robot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,19 +66,6 @@ function DashboardContent() {
   const [showGraph, setShowGraph] = useState(true);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const isInitialLoad = useRef(true);
-
-  // ROS map metadata - YAML dosyanızdan gelen değerler
-  // Bu değerleri YAML dosyanızdan okuyarak güncelleyin
-  const mapMetadata: MapMetadata = {
-    resolution: 0.050,  // meter/pixel - YAML'daki resolution değeri
-    origin: {
-      x: -25.592,  // meter - YAML'daki origin x değeri
-      y: -24.915,  // meter - YAML'daki origin y değeri
-      theta: 0.0   // radyan - YAML'daki origin theta değeri
-    },
-    width: 1013,  // pixel - map_edited.pgm genişliği
-    height: 1002  // pixel - map_edited.pgm yüksekliği
-  };
 
   // Graph data'yı JSON dosyasından yükle
   useEffect(() => {
@@ -250,7 +226,7 @@ function DashboardContent() {
       <div className="map-container">
         <div className="map-wrapper">
           <RobotMap 
-            mapImagePath="/maps/map_edited.svg"
+            robotName={currentRobot.id}
             robots={robotsWithFullData}
             coordinateSystem={{ 
               type: 'coordinate'
@@ -260,7 +236,6 @@ function DashboardContent() {
             onRestrictedAreasChange={setRestrictedAreas}
             graphData={graphData || undefined}
             showGraph={showGraph}
-            mapMetadata={mapMetadata}
           />
         </div>
       </div>
