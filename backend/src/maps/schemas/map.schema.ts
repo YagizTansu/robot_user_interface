@@ -6,37 +6,37 @@ export type MapDocument = MapRecord & Document;
 @Schema({ collection: 'maps', timestamps: false })
 export class MapRecord {
   @Prop({ required: true })
-  map_name: string;
+  map_name: string = '';
 
   @Prop({ required: true })
-  image_png_base64: string;
+  image_png_base64: string = '';
 
   @Prop({ required: true })
-  width_px: number;
+  width_px: number = 0;
 
   @Prop({ required: true })
-  height_px: number;
+  height_px: number = 0;
 
   @Prop({ required: true })
-  resolution: number;
+  resolution: number = 0;
 
   @Prop({ type: [Number], required: true })
-  origin: number[]; // [x, y, theta]
+  origin: number[] = [];
 
   @Prop()
-  negate: number;
+  negate?: number;
 
   @Prop()
-  occupied_thresh: number;
+  occupied_thresh?: number;
 
   @Prop()
-  free_thresh: number;
+  free_thresh?: number;
 
   @Prop()
-  mode: string;
+  mode?: string;
 
   @Prop()
-  timestamp: number;
+  timestamp?: number;
 }
 
 export const MapRecordSchema = SchemaFactory.createForClass(MapRecord);

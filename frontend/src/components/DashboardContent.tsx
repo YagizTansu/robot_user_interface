@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import '../styles/DashboardContent.css';
 import RobotMap from './RobotMap';
 import robotWebSocketService from '../services/robotWebSocketService';
+import { BACKEND_URL } from '../config';
 
 interface Robot {
   id: string;
@@ -62,31 +63,30 @@ function DashboardContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedRobot, setSelectedRobot] = useState<Robot | null>(null);
+  const [currentRobotId, setCurrentRobotId] = useState<string | null>(null);
   const [restrictedAreas, setRestrictedAreas] = useState<RestrictedArea[]>([]);
   const [showGraph, setShowGraph] = useState(true);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const isInitialLoad = useRef(true);
 
-  // Graph data'yı JSON dosyasından yükle
+  // Graph data'yı backend'den aktif graph olarak yükle
   useEffect(() => {
-    const loadGraphData = async () => {
+    const loadActiveGraph = async () => {
       try {
-        const response = await fetch('/graph/waypoints.json');
-        if (!response.ok) {
-          throw new Error('Failed to load graph data');
+        const res = await fetch(`${BACKEND_URL}/graphs/active/${currentRobotId}`);
+        if (res.ok) {
+          const record = await res.json();
+          if (record?.graph) setGraphData(record.graph);
+          else setGraphData({ nodes: [], edges: [] });
+        } else {
+          setGraphData({ nodes: [], edges: [] });
         }
-        const data: GraphData = await response.json();
-        setGraphData(data);
-        console.log('Graph data loaded successfully:', data.nodes.length, 'nodes,', data.edges.length, 'edges');
-      } catch (error) {
-        console.error('Error loading graph data:', error);
-        // Hata durumunda boş graph data kullan
+      } catch {
         setGraphData({ nodes: [], edges: [] });
       }
     };
-
-    loadGraphData();
-  }, []);
+    if (currentRobotId) loadActiveGraph();
+  }, [currentRobotId]);
 
   // useMemo'yu conditional return'lerden önce kullanmalıyız
   const robotsWithFullData = useMemo(() => 
@@ -120,6 +120,7 @@ function DashboardContent() {
         // İlk robotu sadece ilk yüklemede seç
         if (robotsData.length > 0 && !selectedRobot && isInitialLoad.current) {
           setSelectedRobot(robotsData[0]);
+          setCurrentRobotId(robotsData[0].id);
         }
       } else {
         console.log('Robot data unchanged - skipping update');

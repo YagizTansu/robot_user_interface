@@ -6,6 +6,7 @@ import { UsersModule } from './users/users.module';
 import { RobotsModule } from './robots/robots.module';
 import { ZonesModule } from './zones/zones.module';
 import { MapsModule } from './maps/maps.module';
+import { GraphsModule } from './graphs/graphs.module';
 
 @Module({
   imports: [
@@ -13,7 +14,8 @@ import { MapsModule } from './maps/maps.module';
     UsersModule, 
     RobotsModule,
     ZonesModule,
-    MapsModule
+    MapsModule,
+    GraphsModule
   ],
   controllers: [AppController],
   providers: [AppService],

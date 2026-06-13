@@ -1,5 +1,6 @@
 {
-  "nodes": [
+  "graph": {
+    "nodes": [
     {
       "id": "node_n5_0",
       "x": -4.61,
@@ -385,7 +386,7 @@
       "description": "Node 49"
     }
   ],
-  "edges": [
+    "edges": [
     {
       "from": "node_n5_n5",
       "to": "node_n5_0",
@@ -716,4 +717,5 @@
       "max_speed": 0.5
     }
   ]
+  }
 }
