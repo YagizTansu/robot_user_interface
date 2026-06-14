@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import '../styles/RobotMap.css';
 import { BACKEND_URL } from '../config';
 
@@ -188,6 +188,13 @@ const RobotMap: React.FC<RobotMapProps> = ({
   const [mousePosition, setMousePosition] = useState<Point>({ x: 0, y: 0 });
   const [placingNode, setPlacingNode] = useState<{ rosX: number; rosY: number; yaw: number } | null>(null);
   const [rotatingNodeId, setRotatingNodeId] = useState<string | null>(null);
+  const didPanRef = useRef(false);
+  const panStartClientRef = useRef({ x: 0, y: 0 });
+
+  const closeNodePanel = () => {
+    setSelectedNodeId(null);
+    setEditingNode(null);
+  };
 
   useEffect(() => {
     if (!isAddingNode) setPlacingNode(null);
@@ -340,6 +347,8 @@ const RobotMap: React.FC<RobotMapProps> = ({
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (polygonMode.isActive || draggingNodeId || placingNode || rotatingNodeId || isAddingNode) return;
+    didPanRef.current = false;
+    panStartClientRef.current = { x: e.clientX, y: e.clientY };
     setIsDragging(true);
     setDragStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
   };
@@ -409,6 +418,9 @@ const RobotMap: React.FC<RobotMapProps> = ({
     }
     
     if (!isDragging || polygonMode.isActive || draggingNodeId) return;
+    const dx = e.clientX - panStartClientRef.current.x;
+    const dy = e.clientY - panStartClientRef.current.y;
+    if (Math.hypot(dx, dy) > 4) didPanRef.current = true;
     const newPanOffset = {
       x: e.clientX - dragStart.x,
       y: e.clientY - dragStart.y
@@ -439,7 +451,18 @@ const RobotMap: React.FC<RobotMapProps> = ({
   };
 
   const selectArea = (areaId: string) => {
+    closeNodePanel();
     setSelectedAreaId(selectedAreaId === areaId ? null : areaId);
+  };
+
+  const handleMapBackgroundClick = () => {
+    if (didPanRef.current) {
+      didPanRef.current = false;
+      return;
+    }
+    if (placingNode || rotatingNodeId || draggingNodeId) return;
+    closeNodePanel();
+    setSelectedRobotId(null);
   };
 
   const saveAreaToDatabase = async (area: RestrictedArea, robotName: string = 'agv001') => {
@@ -589,6 +612,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
           overflow: 'hidden',
           position: 'relative'
         }}
+        onClick={handleMapBackgroundClick}
       >
         <div 
           className="map-content"
@@ -799,7 +823,8 @@ const RobotMap: React.FC<RobotMapProps> = ({
                       if (isGraphEditorMode && selectedNodeForEdge !== null && onNodeSelectedForEdge) {
                         onNodeSelectedForEdge(node.id);
                       } else {
-                        setSelectedNodeId(selectedNodeId === node.id ? null : node.id);
+                        setSelectedNodeId(node.id);
+                        setSelectedRobotId(null);
                         setEditingNode(null);
                       }
                     }}
@@ -988,6 +1013,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
                   style={{ cursor: 'pointer' }}
                   onClick={(e) => {
                     e.stopPropagation();
+                    closeNodePanel();
                     setSelectedRobotId(selectedRobotId === robot.id ? null : robot.id);
                   }}
                 >
@@ -1081,58 +1107,30 @@ const RobotMap: React.FC<RobotMapProps> = ({
       {selectedNodeId && graphData && (() => {
         const selectedNode = graphData.nodes.find(n => n.id === selectedNodeId);
         if (!selectedNode) return null;
-        
-        const nodePos = convertGraphNodeToPixel(selectedNode);
-        const leftPercent = (nodePos.x / (mapData?.width_px ?? 100)) * 100;
-        const topPercent = (nodePos.y / (mapData?.height_px ?? 100)) * 100;
 
-        // Edit mode için
         const isEditing = editingNode?.id === selectedNode.id;
 
         return (
-          <div 
-            className="node-info-popup"
-            style={{
-              position: 'absolute',
-              left: `${leftPercent}%`,
-              top: `${topPercent}%`,
-              transform: 'translate(-50%, calc(-100% - 12px))',
-              background: 'rgba(255, 255, 255, 0.95)',
-              backdropFilter: 'blur(10px)',
-              border: '1px solid rgba(16, 185, 129, 0.3)',
-              borderRadius: '12px',
-              padding: '12px 16px',
-              minWidth: isEditing ? '240px' : '180px',
-              boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
-              zIndex: 1000,
-              pointerEvents: 'auto'
-            }}
+          <div
+            className={`node-panel-fixed${isEditing ? ' node-panel-fixed--editing' : ''}`}
+            onClick={e => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: '#059669' }}>
+            <div className="node-panel-header">
+              <h4 className="node-panel-title">
                 {isEditing ? 'Edit Node' : selectedNode.description}
               </h4>
               <button
-                onClick={() => {
-                  setSelectedNodeId(null);
-                  setEditingNode(null);
-                }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '16px',
-                  cursor: 'pointer',
-                  color: '#6b7280',
-                  padding: '0',
-                  lineHeight: '1'
-                }}
+                type="button"
+                className="node-panel-close"
+                onClick={closeNodePanel}
+                aria-label="Close"
               >
                 ×
               </button>
             </div>
 
             {/* Mini node preview — matches map appearance */}
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: isEditing ? '12px' : '10px' }}>
+            <div className="node-panel-preview">
               <svg width="52" height="52" viewBox="-16 -16 32 32" aria-hidden="true">
                 <circle
                   r={NODE_R_ACTIVE * 1.35}
