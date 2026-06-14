@@ -7,6 +7,7 @@ import { RobotsModule } from './robots/robots.module';
 import { ZonesModule } from './zones/zones.module';
 import { MapsModule } from './maps/maps.module';
 import { GraphsModule } from './graphs/graphs.module';
+import { CommandsModule } from './commands/commands.module';
 
 @Module({
   imports: [
@@ -15,7 +16,8 @@ import { GraphsModule } from './graphs/graphs.module';
     RobotsModule,
     ZonesModule,
     MapsModule,
-    GraphsModule
+    GraphsModule,
+    CommandsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

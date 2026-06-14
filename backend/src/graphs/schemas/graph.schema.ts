@@ -18,6 +18,7 @@ export class GraphRecord {
       x: number;
       y: number;
       z: number;
+      yaw?: number;
       type: string;
       description: string;
     }[];

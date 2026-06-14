@@ -13,7 +13,7 @@ interface MenuItem {
   id: string;
   icon: React.ReactElement;
   label: string;
-  active: boolean;
+  comingSoon?: boolean;
 }
 
 const Sidebar = ({ 
@@ -34,8 +34,7 @@ const Sidebar = ({
           <rect x="3" y="14" width="7" height="7"/>
         </svg>
       ), 
-      label: 'Dashboard', 
-      active: true 
+      label: 'Dashboard',
     },
     { 
       id: 'graph-editor', 
@@ -48,8 +47,7 @@ const Sidebar = ({
           <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
         </svg>
       ), 
-      label: 'Graph Editor', 
-      active: false 
+      label: 'Graph Editor',
     },
     { 
       id: 'robots', 
@@ -63,8 +61,8 @@ const Sidebar = ({
           <path d="M12 16v4"/>
         </svg>
       ), 
-      label: 'Robots', 
-      active: false 
+      label: 'Robots',
+      comingSoon: true,
     },
     { 
       id: 'maps', 
@@ -75,8 +73,8 @@ const Sidebar = ({
           <line x1="16" y1="6" x2="16" y2="22"/>
         </svg>
       ), 
-      label: 'Maps', 
-      active: false 
+      label: 'Maps',
+      comingSoon: true,
     },
     { 
       id: 'analytics', 
@@ -85,8 +83,8 @@ const Sidebar = ({
           <polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/>
         </svg>
       ), 
-      label: 'Analytics', 
-      active: false 
+      label: 'Analytics',
+      comingSoon: true,
     },
     { 
       id: 'monitoring', 
@@ -96,8 +94,8 @@ const Sidebar = ({
           <circle cx="12" cy="12" r="3"/>
         </svg>
       ), 
-      label: 'Monitoring', 
-      active: false 
+      label: 'Monitoring',
+      comingSoon: true,
     },
     { 
       id: 'settings', 
@@ -107,8 +105,8 @@ const Sidebar = ({
           <path d="m12 1 4 6m-4-6-4 6m4-6v6m8 5-6-4m6 4-6 4m6-4h-6m-7 5 6-4m-6 4 6 4m-6-4h6"/>
         </svg>
       ), 
-      label: 'Settings', 
-      active: false 
+      label: 'Settings',
+      comingSoon: true,
     },
     { 
       id: 'alerts', 
@@ -118,8 +116,8 @@ const Sidebar = ({
           <path d="m13.73 21a2 2 0 0 1-3.46 0"/>
         </svg>
       ), 
-      label: 'Alerts', 
-      active: false 
+      label: 'Alerts',
+      comingSoon: true,
     },
   ];
 
@@ -159,7 +157,12 @@ const Sidebar = ({
             title={sidebarCollapsed ? item.label : ''}
           >
             <span className="nav-icon">{item.icon}</span>
-            {!sidebarCollapsed && <span className="nav-label">{item.label}</span>}
+            {!sidebarCollapsed && (
+              <span className="nav-label">
+                {item.label}
+                {item.comingSoon && <span className="nav-badge">Soon</span>}
+              </span>
+            )}
           </button>
         ))}
       </nav>

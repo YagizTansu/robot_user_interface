@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import './App.css'
 import Sidebar from './components/Sidebar'
-import Header from './components/Header'
 import DashboardContent from './components/DashboardContent'
 import GraphEditor from './components/GraphEditor'
 
 function App() {
   const [activeMenuItem, setActiveMenuItem] = useState('dashboard')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [mobileMenuOpen] = useState(false)
 
   return (
     <div className="dashboard">

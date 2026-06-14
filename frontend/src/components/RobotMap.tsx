@@ -44,6 +44,9 @@ interface RobotMapProps {
   onNodeAdded?: () => void;
   selectedNodeForEdge?: string | null;
   onNodeSelectedForEdge?: (nodeId: string) => void;
+  enableSendRobot?: boolean;
+  onSendRobotToNode?: (node: GraphNode) => void | Promise<void>;
+  sendRobotLoading?: boolean;
 }
 
 interface Point {
@@ -77,6 +80,7 @@ interface GraphNode {
   x: number;
   y: number;
   z: number;
+  yaw?: number;
   type: string;
   description: string;
 }
@@ -100,6 +104,51 @@ interface PolygonCreationMode {
   startPoint?: Point;
 }
 
+const NODE_R_DEFAULT = 8;
+const NODE_R_EDGE = 8;
+const NODE_R_ACTIVE = 9;
+
+const getNodeRadius = (isSelected: boolean, isDragging: boolean, isEdgeSelected: boolean) => {
+  if (isSelected || isDragging) return NODE_R_ACTIVE;
+  if (isEdgeSelected) return NODE_R_EDGE;
+  return NODE_R_DEFAULT;
+};
+
+const getNodeYaw = (node: GraphNode): number => node.yaw ?? 0;
+
+/** ROS yaw (rad) from SVG pixel offset (Y axis points down). */
+const yawFromPixelDelta = (dx: number, dy: number): number => Math.atan2(-dy, dx);
+
+const yawToHandlePos = (yaw: number, distance: number) => ({
+  x: distance * Math.cos(yaw),
+  y: -distance * Math.sin(yaw),
+});
+
+const radToDeg = (rad: number) => (rad * 180) / Math.PI;
+const degToRad = (deg: number) => (deg * Math.PI) / 180;
+
+/** Compact chevron arrow drawn inside the node circle. */
+function renderInnerNodeArrow(
+  yaw: number,
+  radius: number,
+  options: { opacity?: number; arrowColor?: string } = {}
+) {
+  const { opacity = 1, arrowColor = '#ffffff' } = options;
+  const scale = radius / NODE_R_DEFAULT;
+  const svgRotate = -radToDeg(yaw);
+
+  return (
+    <g transform={`rotate(${svgRotate})`} style={{ pointerEvents: 'none' }} opacity={opacity}>
+      <path
+        d={`M ${-0.8 * scale},${-2.8 * scale} L ${3.8 * scale},0 L ${-0.8 * scale},${2.8 * scale} Z`}
+        fill={arrowColor}
+        fillOpacity={0.95}
+      />
+      <circle cx={-1.2 * scale} cy={0} r={1.1 * scale} fill={arrowColor} fillOpacity={0.45} />
+    </g>
+  );
+}
+
 const RobotMap: React.FC<RobotMapProps> = ({ 
   robotName,
   robots = [],
@@ -115,7 +164,10 @@ const RobotMap: React.FC<RobotMapProps> = ({
   isAddingNode = false,
   onNodeAdded,
   selectedNodeForEdge = null,
-  onNodeSelectedForEdge
+  onNodeSelectedForEdge,
+  enableSendRobot = false,
+  onSendRobotToNode,
+  sendRobotLoading = false,
 }) => {
   const [selectedRobotId, setSelectedRobotId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -134,6 +186,12 @@ const RobotMap: React.FC<RobotMapProps> = ({
   const [polygonMode, setPolygonMode] = useState<PolygonCreationMode>({ isActive: false, type: 'restricted' });
   const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
   const [mousePosition, setMousePosition] = useState<Point>({ x: 0, y: 0 });
+  const [placingNode, setPlacingNode] = useState<{ rosX: number; rosY: number; yaw: number } | null>(null);
+  const [rotatingNodeId, setRotatingNodeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAddingNode) setPlacingNode(null);
+  }, [isAddingNode]);
 
   // Fetch map data from backend
   useEffect(() => {
@@ -215,6 +273,48 @@ const RobotMap: React.FC<RobotMapProps> = ({
     return { x: node.x, y: node.y };
   };
 
+  const getSvgPoint = (svg: SVGSVGElement, clientX: number, clientY: number) => {
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    return pt.matrixTransform(svg.getScreenCTM()?.inverse());
+  };
+
+  const svgPointToRos = (svgP: { x: number; y: number }) => {
+    if (!mapData) return { x: 0, y: 0 };
+    return {
+      x: svgP.x * mapData.resolution + mapData.origin[0],
+      y: (mapData.height_px - svgP.y) * mapData.resolution + mapData.origin[1],
+    };
+  };
+
+  const commitPlacingNode = () => {
+    if (!placingNode || !graphData || !onGraphDataChange) return;
+    const newNode: GraphNode = {
+      id: `node_${Date.now()}`,
+      x: parseFloat(placingNode.rosX.toFixed(2)),
+      y: parseFloat(placingNode.rosY.toFixed(2)),
+      z: 0.0,
+      yaw: parseFloat(placingNode.yaw.toFixed(4)),
+      type: 'waypoint',
+      description: `Node ${graphData.nodes.length + 1}`,
+    };
+    onGraphDataChange({
+      ...graphData,
+      nodes: [...graphData.nodes, newNode],
+    });
+    setPlacingNode(null);
+    onNodeAdded?.();
+  };
+
+  const updateNodeYaw = (nodeId: string, yaw: number) => {
+    if (!graphData || !onGraphDataChange) return;
+    const updatedNodes = graphData.nodes.map(n =>
+      n.id === nodeId ? { ...n, yaw: parseFloat(yaw.toFixed(4)) } : n
+    );
+    onGraphDataChange({ ...graphData, nodes: updatedNodes });
+  };
+
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
       case 'active': return '#10b981';
@@ -239,22 +339,40 @@ const RobotMap: React.FC<RobotMapProps> = ({
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (polygonMode.isActive || draggingNodeId) return;
+    if (polygonMode.isActive || draggingNodeId || placingNode || rotatingNodeId || isAddingNode) return;
     setIsDragging(true);
     setDragStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    const svg = e.currentTarget.querySelector('svg');
+
+    // Rotate existing node via handle
+    if (rotatingNodeId && graphData && onGraphDataChange && mapData && svg) {
+      const node = graphData.nodes.find(n => n.id === rotatingNodeId);
+      if (node) {
+        const nodePixel = convertGraphNodeToPixel(node);
+        const svgP = getSvgPoint(svg, e.clientX, e.clientY);
+        const yaw = yawFromPixelDelta(svgP.x - nodePixel.x, svgP.y - nodePixel.y);
+        updateNodeYaw(rotatingNodeId, yaw);
+      }
+      return;
+    }
+
+    // Preview yaw while placing a new node
+    if (placingNode && mapData && svg) {
+      const nodePixel = convertRosToPixel(placingNode.rosX, placingNode.rosY);
+      const svgP = getSvgPoint(svg, e.clientX, e.clientY);
+      const yaw = yawFromPixelDelta(svgP.x - nodePixel.x, svgP.y - nodePixel.y);
+      setPlacingNode(prev => prev ? { ...prev, yaw } : null);
+      return;
+    }
+
     // Node sürükleme
     if (draggingNodeId && graphData && onGraphDataChange && mapData && dragOffset) {
-      const svg = e.currentTarget.querySelector('svg');
       if (!svg) return;
       
-      const pt = svg.createSVGPoint();
-      pt.x = e.clientX;
-      pt.y = e.clientY;
-      
-      const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
+      const svgP = getSvgPoint(svg, e.clientX, e.clientY);
       
       // SVG koordinatlarını ROS koordinatlarına çevir
       const rosX = svgP.x * mapData.resolution + mapData.origin[0];
@@ -276,15 +394,9 @@ const RobotMap: React.FC<RobotMapProps> = ({
     }
     
     if (polygonMode.isActive && polygonMode.startPoint && mapData) {
-      const svg = e.currentTarget.querySelector('svg');
       if (!svg) return;
       
-      // SVG koordinat sistemine dönüştür
-      const pt = svg.createSVGPoint();
-      pt.x = e.clientX;
-      pt.y = e.clientY;
-      
-      const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
+      const svgP = getSvgPoint(svg, e.clientX, e.clientY);
       
       // SVG koordinatlarını yüzde değerine çevir
       const x = (svgP.x / mapData.width_px) * 100;
@@ -308,9 +420,13 @@ const RobotMap: React.FC<RobotMapProps> = ({
   };
 
   const handleMouseUp = () => {
+    if (placingNode) {
+      commitPlacingNode();
+    }
     setIsDragging(false);
     setDraggingNodeId(null);
     setDragOffset(null);
+    setRotatingNodeId(null);
   };
 
   const startPolygonCreation = (type: 'restricted' | 'docking-pallet' = 'restricted') => {
@@ -483,7 +599,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
             transform: `scale(${zoomLevel}) translate(${panOffset.x}px, ${panOffset.y}px)`,
             transition: isDragging ? 'none' : 'transform 0.3s ease',
             transformOrigin: 'center center',
-            cursor: polygonMode.isActive ? 'crosshair' : (isDragging ? 'grabbing' : 'grab')
+            cursor: polygonMode.isActive || isAddingNode || placingNode ? 'crosshair' : (isDragging ? 'grabbing' : 'grab')
           }}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
@@ -499,8 +615,16 @@ const RobotMap: React.FC<RobotMapProps> = ({
               height: '100%',
               display: 'block',
               borderRadius: '12px',
-              pointerEvents: (isGraphEditorMode && isAddingNode) || polygonMode.isActive ? 'auto' : 'none',
-              cursor: (isGraphEditorMode && isAddingNode) || polygonMode.isActive ? 'crosshair' : 'default'
+              pointerEvents: (isGraphEditorMode && (isAddingNode || !!placingNode)) || polygonMode.isActive ? 'auto' : 'none',
+              cursor: (isGraphEditorMode && isAddingNode) || placingNode || polygonMode.isActive ? 'crosshair' : 'default'
+            }}
+            onMouseDown={(e) => {
+              if (!mapData || !isGraphEditorMode || !isAddingNode || !graphData || placingNode) return;
+              e.stopPropagation();
+              const svgP = getSvgPoint(e.currentTarget, e.clientX, e.clientY);
+              const ros = svgPointToRos(svgP);
+              setPlacingNode({ rosX: ros.x, rosY: ros.y, yaw: 0 });
+              setIsDragging(false);
             }}
             onClick={(e) => {
               if (!mapData) return;
@@ -509,10 +633,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
               if (polygonMode.isActive) {
                 const svg = e.currentTarget;
                 
-                const pt = svg.createSVGPoint();
-                pt.x = e.clientX;
-                pt.y = e.clientY;
-                const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
+                const svgP = getSvgPoint(svg, e.clientX, e.clientY);
                 
                 // SVG koordinatlarını yüzde değerine çevir
                 const x = (svgP.x / mapData.width_px) * 100;
@@ -564,38 +685,6 @@ const RobotMap: React.FC<RobotMapProps> = ({
                   stopPolygonCreation();
                 }
                 return;
-              }
-              
-              // Graph editor mode - SVG içinde node ekleme
-              if (isGraphEditorMode && isAddingNode && graphData && onGraphDataChange) {
-                const svg = e.currentTarget;
-                
-                const pt = svg.createSVGPoint();
-                pt.x = e.clientX;
-                pt.y = e.clientY;
-                const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
-                
-                // SVG koordinatlarını ROS koordinatlarına çevir
-                const rosX = svgP.x * mapData.resolution + mapData.origin[0];
-                const rosYCoord = (mapData.height_px - svgP.y) * mapData.resolution + mapData.origin[1];
-                
-                // Yeni node oluştur
-                const newNode: GraphNode = {
-                  id: `node_${Date.now()}`,
-                  x: parseFloat(rosX.toFixed(2)),
-                  y: parseFloat(rosYCoord.toFixed(2)),
-                  z: 0.0,
-                  type: 'waypoint',
-                  description: `Node ${graphData.nodes.length + 1}`
-                };
-                
-                onGraphDataChange({
-                  ...graphData,
-                  nodes: [...graphData.nodes, newNode]
-                });
-                
-                onNodeAdded?.();
-                console.log('Node added at SVG:', { x: svgP.x.toFixed(1), y: svgP.y.toFixed(1) }, 'ROS:', { x: rosX.toFixed(2), y: rosYCoord.toFixed(2) });
               }
             }}
           >
@@ -652,100 +741,113 @@ const RobotMap: React.FC<RobotMapProps> = ({
               );
             })}
             
+            {/* Preview node while placing (click-drag) */}
+            {showGraph && placingNode && mapData && (() => {
+              const pos = convertRosToPixel(placingNode.rosX, placingNode.rosY);
+              const r = NODE_R_ACTIVE;
+              return (
+                <g transform={`translate(${pos.x}, ${pos.y})`} style={{ pointerEvents: 'none' }}>
+                  <circle
+                    cx={0} cy={0} r={r}
+                    fill="#2563eb" fillOpacity="0.2"
+                    stroke="#2563eb" strokeWidth="2" strokeDasharray="4,3"
+                  />
+                  {renderInnerNodeArrow(placingNode.yaw, r, { arrowColor: '#2563eb', opacity: 0.9 })}
+                </g>
+              );
+            })()}
+
             {/* Render graph nodes (waypoints) */}
             {showGraph && graphData?.nodes.map((node) => {
               const pos = convertGraphNodeToPixel(node);
+              const yaw = getNodeYaw(node);
               const isSelected = selectedNodeId === node.id;
               const isSelectedForEdge = selectedNodeForEdge === node.id;
               const isDraggingThis = draggingNodeId === node.id;
+              const nodeColor = isSelected || isDraggingThis ? '#059669' : isSelectedForEdge ? '#f59e0b' : '#10b981';
+              const radius = getNodeRadius(isSelected, isDraggingThis, isSelectedForEdge);
+              const handlePos = yawToHandlePos(yaw, radius + 2.5);
+              const nodeOpacity = isDraggingThis ? 0.75 : 0.95;
               
               return (
-                <g key={node.id}>
-                  {/* Node circle */}
+                <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`}>
                   <circle
-                    cx={pos.x}
-                    cy={pos.y}
-                    r={isSelected || isDraggingThis ? "7" : isSelectedForEdge ? "6" : "5"}
-                    fill={isSelected || isDraggingThis ? "#059669" : isSelectedForEdge ? "#f59e0b" : "#10b981"}
+                    cx={0}
+                    cy={0}
+                    r={radius}
+                    fill={nodeColor}
+                    fillOpacity={nodeOpacity}
                     stroke="#ffffff"
-                    strokeWidth={isSelected || isSelectedForEdge || isDraggingThis ? "2" : "1.5"}
-                    opacity={isDraggingThis ? "0.7" : "0.9"}
+                    strokeWidth={isSelected || isSelectedForEdge || isDraggingThis ? "2.5" : "2"}
                     style={{
-                      filter: isSelected || isDraggingThis ? 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' : 'drop-shadow(0 1px 2px rgba(0,0,0,0.2))',
+                      filter: isSelected || isDraggingThis
+                        ? 'drop-shadow(0 2px 6px rgba(0,0,0,0.28))'
+                        : 'drop-shadow(0 1px 3px rgba(0,0,0,0.18))',
                       cursor: isGraphEditorMode ? (isDraggingThis ? 'grabbing' : 'grab') : 'pointer',
                       pointerEvents: 'auto'
                     }}
                     onMouseDown={(e) => {
                       e.stopPropagation();
-                      if (isGraphEditorMode && selectedNodeForEdge === null) {
-                        // Graph editor mode - node sürükleme başlat
+                      if (isGraphEditorMode && selectedNodeForEdge === null && !rotatingNodeId) {
                         setDraggingNodeId(node.id);
                         setDragOffset({ x: e.clientX - pos.x, y: e.clientY - pos.y });
                       }
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (draggingNodeId) {
-                        // Sürükleme bitince tıklama olayını ignore et
-                        return;
-                      }
+                      if (draggingNodeId || rotatingNodeId) return;
                       if (isGraphEditorMode && selectedNodeForEdge !== null && onNodeSelectedForEdge) {
-                        // Graph editor mode - edge oluşturma modu aktifse edge için node seçimi
                         onNodeSelectedForEdge(node.id);
                       } else {
-                        // Normal mode veya edge modu değilse - node bilgilerini göster
                         setSelectedNodeId(selectedNodeId === node.id ? null : node.id);
                         setEditingNode(null);
                       }
                     }}
                   />
+
+                  {renderInnerNodeArrow(yaw, radius, { opacity: nodeOpacity })}
+
+                  {/* Rotation handle on circle edge */}
+                  {isGraphEditorMode && isSelected && selectedNodeForEdge === null && (
+                    <circle
+                      cx={handlePos.x}
+                      cy={handlePos.y}
+                      r="5"
+                      fill="#1a1a1a"
+                      stroke="#ffffff"
+                      strokeWidth="1.5"
+                      style={{ cursor: 'grab', pointerEvents: 'auto' }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        setRotatingNodeId(node.id);
+                        setIsDragging(false);
+                      }}
+                    />
+                  )}
                   
                   {/* Graph editor mode - delete button */}
                   {isGraphEditorMode && isSelected && (
                     <g>
                       <circle
-                        cx={pos.x + 12}
-                        cy={pos.y - 12}
-                        r="8"
+                        cx={radius + 4}
+                        cy={-(radius + 4)}
+                        r="7"
                         fill="#ef4444"
                         stroke="#ffffff"
                         strokeWidth="1.5"
-                        style={{
-                          cursor: 'pointer',
-                          pointerEvents: 'auto'
-                        }}
+                        style={{ cursor: 'pointer', pointerEvents: 'auto' }}
                         onClick={(e) => {
                           e.stopPropagation();
                           if (graphData && onGraphDataChange) {
-                            // Node'u ve bağlı edge'leri sil
                             const updatedNodes = graphData.nodes.filter(n => n.id !== node.id);
-                            const updatedEdges = graphData.edges.filter(e => e.from !== node.id && e.to !== node.id);
-                            onGraphDataChange({
-                              nodes: updatedNodes,
-                              edges: updatedEdges
-                            });
+                            const updatedEdges = graphData.edges.filter(ed => ed.from !== node.id && ed.to !== node.id);
+                            onGraphDataChange({ nodes: updatedNodes, edges: updatedEdges });
                             setSelectedNodeId(null);
                           }
                         }}
                       />
-                      <line
-                        x1={pos.x + 9}
-                        y1={pos.y - 15}
-                        x2={pos.x + 15}
-                        y2={pos.y - 9}
-                        stroke="#ffffff"
-                        strokeWidth="2"
-                        style={{ pointerEvents: 'none' }}
-                      />
-                      <line
-                        x1={pos.x + 15}
-                        y1={pos.y - 15}
-                        x2={pos.x + 9}
-                        y2={pos.y - 9}
-                        stroke="#ffffff"
-                        strokeWidth="2"
-                        style={{ pointerEvents: 'none' }}
-                      />
+                      <line x1={radius + 1.5} y1={-(radius + 6.5)} x2={radius + 6.5} y2={-(radius + 1.5)} stroke="#ffffff" strokeWidth="2" style={{ pointerEvents: 'none' }} />
+                      <line x1={radius + 6.5} y1={-(radius + 6.5)} x2={radius + 1.5} y2={-(radius + 1.5)} stroke="#ffffff" strokeWidth="2" style={{ pointerEvents: 'none' }} />
                     </g>
                   )}
                 </g>
@@ -925,7 +1027,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
                         color: 'white',
                         padding: '1px 3px',
                         borderRadius: '3px',
-                        fontSize: '4px',
+                        fontSize: '8px',
                         fontWeight: '500',
                         textAlign: 'center',
                         whiteSpace: 'nowrap',
@@ -1029,6 +1131,24 @@ const RobotMap: React.FC<RobotMapProps> = ({
               </button>
             </div>
 
+            {/* Mini node preview — matches map appearance */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: isEditing ? '12px' : '10px' }}>
+              <svg width="52" height="52" viewBox="-16 -16 32 32" aria-hidden="true">
+                <circle
+                  r={NODE_R_ACTIVE * 1.35}
+                  fill="#059669"
+                  fillOpacity={0.95}
+                  stroke="#ffffff"
+                  strokeWidth="2.5"
+                  style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))' }}
+                />
+                {renderInnerNodeArrow(
+                  isEditing ? (editingNode.yaw ?? 0) : getNodeYaw(selectedNode),
+                  NODE_R_ACTIVE * 1.35
+                )}
+              </svg>
+            </div>
+
             {isEditing ? (
               <div style={{ display: 'grid', gap: '8px' }}>
                 <div>
@@ -1105,6 +1225,25 @@ const RobotMap: React.FC<RobotMapProps> = ({
                     }}
                   />
                 </div>
+                <div>
+                  <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>
+                    Yaw (°):
+                  </label>
+                  <input
+                    type="number"
+                    step="1"
+                    value={radToDeg(editingNode.yaw ?? 0).toFixed(1)}
+                    onChange={(e) => setEditingNode({ ...editingNode, yaw: degToRad(parseFloat(e.target.value) || 0) })}
+                    style={{
+                      width: '100%',
+                      padding: '6px 8px',
+                      fontSize: '12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      outline: 'none'
+                    }}
+                  />
+                </div>
                 <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                   <button
                     onClick={() => {
@@ -1169,10 +1308,44 @@ const RobotMap: React.FC<RobotMapProps> = ({
                       ({selectedNode.x.toFixed(2)}m, {selectedNode.y.toFixed(2)}m)
                     </span>
                   </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#6b7280' }}>Yaw:</span>
+                    <span style={{ color: '#1a1a1a', fontWeight: '500' }}>
+                      {radToDeg(getNodeYaw(selectedNode)).toFixed(1)}°
+                    </span>
+                  </div>
                 </div>
+                {enableSendRobot && onSendRobotToNode && (
+                  <button
+                    onClick={() => onSendRobotToNode(selectedNode)}
+                    disabled={sendRobotLoading}
+                    style={{
+                      width: '100%',
+                      marginTop: '10px',
+                      padding: '8px 12px',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      color: '#ffffff',
+                      background: sendRobotLoading ? '#9ca3af' : '#1a1a1a',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: sendRobotLoading ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M5 12h14"/>
+                      <path d="m12 5 7 7-7 7"/>
+                    </svg>
+                    {sendRobotLoading ? 'Sending…' : 'Send Robot'}
+                  </button>
+                )}
                 {isGraphEditorMode && (
                   <button
-                    onClick={() => setEditingNode({ ...selectedNode })}
+                    onClick={() => setEditingNode({ ...selectedNode, yaw: selectedNode.yaw ?? 0 })}
                     style={{
                       width: '100%',
                       marginTop: '8px',
