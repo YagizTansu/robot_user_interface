@@ -1,58 +1,272 @@
-# 1. MongoDB durumunu kontrol et
-sudo systemctl status mongod
-mongosh --eval "db.adminCommand('ping')"
+================================================================================
+  ROBOT USER INTERFACE — SIFIRDAN KURULUM (Ubuntu / Debian tabanlı Linux)
+================================================================================
 
-# 2. MongoDB'yi durdur
-sudo systemctl stop mongod
+Hedef: Yeni bir PC'de MongoDB (Replica Set) + Backend (NestJS) + Frontend (Vite)
+çalışır hale getirmek.
 
-# 3. Config dosyasını yedekle
-sudo cp /etc/mongod.conf /etc/mongod.conf.backup
+Varsayılan portlar:
+  - MongoDB  : 27017
+  - Backend  : 3000
+  - Frontend : 5173
 
-# 4. Config dosyasını düzenle
-sudo nano /etc/mongod.conf
+Proje klasörü örneği:
+  ~/Desktop/robot_user_interface
 
-# Dosyanın sonuna ekle:
-# replication:
-#   replSetName: "rs0"
+Tüm komutları sırayla uygula. Bir adım hata verirse sonraki adıma geçme.
 
-# 5. MongoDB'yi yeniden başlat
+
+================================================================================
+ADIM 0 — SİSTEM GÜNCELLEMESİ VE TEMEL ARAÇLAR
+================================================================================
+
+sudo apt update
+sudo apt upgrade -y
+sudo apt install -y curl git build-essential ca-certificates gnupg
+
+
+================================================================================
+ADIM 1 — NODE.JS KURULUMU (v20 LTS önerilir)
+================================================================================
+
+# NodeSource ile Node.js 20 kurulumu
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Doğrula (Node >= 18 olmalı)
+node -v
+npm -v
+
+
+================================================================================
+ADIM 2 — MONGODB KURULUMU
+================================================================================
+
+# MongoDB 7.0 resmi deposunu ekle (Ubuntu 22.04 / 24.04)
+curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc \
+  | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
+
+# Ubuntu sürümünü kontrol et:
+lsb_release -cs
+# Çıktı jammy ise 22.04, noble ise 24.04
+
+# Ubuntu 22.04 (jammy) için:
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" \
+  | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+
+# Ubuntu 24.04 (noble) için yukarıdaki satırda jammy yerine noble yaz:
+# echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/7.0 multiverse" \
+#   | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+
+sudo apt update
+sudo apt install -y mongodb-org
+
+# Servisi başlat ve açılışta otomatik başlasın
+sudo systemctl enable mongod
 sudo systemctl start mongod
 sudo systemctl status mongod
 
-# 6. MongoDB shell'e bağlan ve replica set'i başlat
-mongosh
+# Bağlantı testi (ok: { ok: 1 } görmelisin)
+mongosh --eval "db.adminCommand('ping')"
 
-# MongoDB shell içinde:
-rs.initiate({
-  _id: "rs0",
-  members: [
-    { _id: 0, host: "localhost:27017" }
-  ]
-})
 
-# Durumu kontrol et
-rs.status()
-rs.isMaster()
+================================================================================
+ADIM 3 — MONGODB REPLICA SET (Change Streams için ZORUNLU)
+================================================================================
 
-# Shell'den çık
-exit
+# Backend gerçek zamanlı veri için MongoDB Change Streams kullanır.
+# Change Streams çalışması için MongoDB Replica Set olmalıdır.
 
-# 7. Backend'i test et
-cd /home/yagiz/Desktop/advobot_user_interface/backend
+# 3.1 MongoDB'yi durdur
+sudo systemctl stop mongod
+
+# 3.2 Config yedeği al
+sudo cp /etc/mongod.conf /etc/mongod.conf.backup
+
+# 3.3 Replica set ayarını ekle
+# Aşağıdaki komut dosyanın sonuna replication bloğunu ekler.
+# Zaten varsa nano ile elle kontrol et: sudo nano /etc/mongod.conf
+grep -q 'replSetName' /etc/mongod.conf || sudo tee -a /etc/mongod.conf > /dev/null <<'EOF'
+
+replication:
+  replSetName: "rs0"
+EOF
+
+# 3.4 MongoDB'yi yeniden başlat
+sudo systemctl start mongod
+sudo systemctl status mongod
+
+# 3.5 Replica set'i başlat (tek node yeterli — geliştirme ortamı)
+mongosh --eval 'rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "localhost:27017" }] })'
+
+# 3.6 Doğrula — state: PRIMARY olmalı
+mongosh --eval 'rs.status().members.map(m => ({ name: m.name, state: m.stateStr }))'
+
+# Not: "already initialized" hatası alırsan replica set zaten kuruludur, devam et.
+
+
+================================================================================
+ADIM 4 — PROJEYİ AL
+================================================================================
+
+# Seçenek A — Git ile klonla (repo URL'ini kendi adresinle değiştir)
+# cd ~/Desktop
+# git clone <REPO_URL> robot_user_interface
+
+# Seçenek B — Projeyi USB / zip ile kopyaladıysan klasöre git
+cd ~/Desktop/robot_user_interface
+
+# Klasörün doğru olduğunu kontrol et
+ls backend/package.json frontend/package.json
+
+
+================================================================================
+ADIM 5 — BACKEND KURULUMU
+================================================================================
+
+cd ~/Desktop/robot_user_interface/backend
+
+# Bağımlılıkları yükle
+npm install
+
+# (İsteğe bağlı) Production build testi
+# npm run build
+
+# Geliştirme sunucusunu başlat
 npm run start:dev
 
-# Log'da "MongoDB Change Streams initialized" mesajını görmeli
-# "Change stream error" OLMAMALI
+# Bu terminali açık bırak.
+# Log'da şunları görmelisin:
+#   - Nest application successfully started
+#   - MongoDB Change Streams initialized
+# "Change stream error" OLMAMALI.
 
-# 8. Sorun çıkarsa config'i geri al
-# sudo cp /etc/mongod.conf.backup /etc/mongod.conf
-# sudo systemctl restart mongod
+# Backend varsayılan olarak şuraya bağlanır (app.module.ts):
+#   mongodb://localhost:27017/robot_database
+# Veritabanı ilk çalıştırmada otomatik oluşur; ayrıca DB oluşturmana gerek yok.
 
 
+================================================================================
+ADIM 6 — FRONTEND KURULUMU (YENİ TERMİNAL)
+================================================================================
 
-ros2 launch robot_gazebo robot_warehouse.launch.py
-ros2 launch dual_laser_merger demo_laser_merger.launch.py
-ros2 launch robot_navigation robot_amcl_navigation2.launch.py
-python3 /home/yagiz/ros2_ws/src/robot_navigation/scripts/visualize_graph_rviz.py /home/yagiz/ros2_ws/src/robot_navigation/config/test_graph.json
-frontend: npm run dev
-backend: npm run start
+cd ~/Desktop/robot_user_interface/frontend
+
+# Bağımlılıkları yükle
+npm install
+
+# Geliştirme sunucusunu başlat
+npm run dev
+
+# Terminalde şuna benzer bir adres görürsün:
+#   Local:   http://localhost:5173/
+#   Network: http://192.168.x.x:5173/
+
+# Tarayıcıda aç:
+#   http://localhost:5173
+
+# Frontend backend adresini otomatik türetir (config.ts):
+#   http://<tarayıcının-hostname'i>:3000
+# Aynı PC'den açıyorsan: http://localhost:3000
+
+
+================================================================================
+ADIM 7 — KURULUM DOĞRULAMA
+================================================================================
+
+# Yeni bir terminal aç:
+
+# 7.1 Backend API
+curl -s http://localhost:3000/maps
+# JSON dönmeli (boş liste [] de olabilir)
+
+# 7.2 MongoDB
+mongosh robot_database --eval "db.getCollectionNames()"
+
+# 7.3 Replica set
+mongosh --eval "rs.isMaster().ismaster"
+# true dönmeli
+
+# 7.4 Frontend (tarayıcı)
+# Dashboard ve Graph Editor sayfaları açılmalı, konsolda CORS / bağlantı hatası olmamalı
+
+
+================================================================================
+GÜNLÜK KULLANIM (her açılışta)
+================================================================================
+
+# Terminal 1 — MongoDB (genelde zaten çalışıyor)
+sudo systemctl start mongod
+
+# Terminal 2 — Backend
+cd ~/Desktop/robot_user_interface/backend
+npm run start:dev
+
+# Terminal 3 — Frontend
+cd ~/Desktop/robot_user_interface/frontend
+npm run dev
+
+
+================================================================================
+AĞ ÜZERİNDEN BAŞKA CİHAZDAN ERİŞİM
+================================================================================
+
+# Sunucu PC'nin yerel IP'sini öğren:
+hostname -I
+
+# Diğer cihazdan tarayıcıda aç:
+#   http://<SUNUCU_IP>:5173
+
+# Backend de aynı IP üzerinden erişilebilir olmalı (CORS açık).
+# Frontend otomatik olarak http://<SUNUCU_IP>:3000 adresine bağlanır.
+
+# Güvenlik duvarı kullanıyorsan portları aç:
+# sudo ufw allow 3000/tcp
+# sudo ufw allow 5173/tcp
+
+
+================================================================================
+SORUN GİDERME
+================================================================================
+
+--- MongoDB başlamıyor ---
+sudo journalctl -u mongod -n 50 --no-pager
+sudo systemctl restart mongod
+
+--- Replica set hatası / Change stream error ---
+mongosh --eval "rs.status()"
+# PRIMARY değilse:
+mongosh --eval 'rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "localhost:27017" }] })'
+
+--- Config'i eski haline al ---
+sudo cp /etc/mongod.conf.backup /etc/mongod.conf
+sudo systemctl restart mongod
+
+--- Port 3000 veya 5173 meşgul ---
+sudo lsof -i :3000
+sudo lsof -i :5173
+# İlgili process'i kapat veya PORT değiştir:
+# Backend: PORT=3001 npm run start:dev  (frontend config.ts'yi de güncelle)
+
+--- npm install hataları ---
+cd backend && rm -rf node_modules package-lock.json && npm install
+cd frontend && rm -rf node_modules package-lock.json && npm install
+
+--- node: command not found ---
+# ADIM 1'i tekrarla veya terminali kapatıp aç
+
+
+================================================================================
+PRODUCTION (isteğe bağlı kısa not)
+================================================================================
+
+# Backend
+cd ~/Desktop/robot_user_interface/backend
+npm run build
+npm run start:prod
+
+# Frontend
+cd ~/Desktop/robot_user_interface/frontend
+npm run build
+# dist/ klasörünü nginx / static server ile sun
+# npm run preview   # hızlı test için
