@@ -5,9 +5,19 @@ import { MapsService } from './maps.service';
 export class MapsController {
   constructor(private readonly mapsService: MapsService) {}
 
+  @Get()
+  findAll() {
+    return this.mapsService.findAllSummaries();
+  }
+
   @Get('by-robot/:robotName')
   findByRobot(@Param('robotName') robotName: string) {
     return this.mapsService.findByRobotName(robotName);
+  }
+
+  @Get(':mapName/robots')
+  findRobotsByMap(@Param('mapName') mapName: string) {
+    return this.mapsService.findRobotsByMapName(mapName);
   }
 
   @Get(':mapName')

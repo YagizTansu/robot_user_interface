@@ -26,7 +26,8 @@
   min-width: 0;
 }
 
-/* Robot Selector */
+/* Map & Robot Selectors */
+.map-selector,
 .robot-selector {
   display: flex;
   align-items: center;
@@ -49,7 +50,8 @@
   border-top: 1px solid rgba(26, 26, 26, 0.05);
 }
 
-.robot-selector select {
+.robot-selector select,
+.map-selector select {
   padding: 6px 12px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
@@ -62,11 +64,13 @@
   min-width: 140px;
 }
 
-.robot-selector select:hover {
+.robot-selector select:hover,
+.map-selector select:hover {
   border-color: rgba(26, 26, 26, 0.2);
 }
 
-.robot-selector select:focus {
+.robot-selector select:focus,
+.map-selector select:focus {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.08);

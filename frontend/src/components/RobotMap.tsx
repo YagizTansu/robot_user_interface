@@ -25,13 +25,13 @@ interface MapData {
 
 interface RobotMapProps {
   robotName?: string;
+  mapName?: string;
   robots?: Robot[];
   coordinateSystem?: {
     type: 'percentage' | 'coordinate';
     maxX?: number;
     maxY?: number;
   };
-  robotSvgPath?: string;
   enablePolygonDrawing?: boolean;
   restrictedAreas?: RestrictedArea[];
   onRestrictedAreasChange?: (areas: RestrictedArea[]) => void;
@@ -127,6 +127,61 @@ const yawToHandlePos = (yaw: number, distance: number) => ({
 const radToDeg = (rad: number) => (rad * 180) / Math.PI;
 const degToRad = (deg: number) => (deg * Math.PI) / 180;
 
+/** ROS yaw (degrees, CCW from +X) → SVG rotate. Map Y is flipped; marker front points +X. */
+const rosYawDegToSvgRotate = (yawDeg: number) => -yawDeg;
+
+/** Top-down AGV marker drawn in SVG (front = +X). */
+function renderRobotMarker(halfW: number, halfH: number, selected: boolean) {
+  const strokeW = Math.max(1.5, halfW * 0.07);
+  const bodyFill = selected ? '#1a1a1a' : '#2d2d2d';
+  const frontFill = selected ? '#3b82f6' : '#10b981';
+
+  return (
+    <g style={{ pointerEvents: 'none' }}>
+      {selected && (
+        <rect
+          x={-halfW - 4}
+          y={-halfH - 4}
+          width={halfW * 2 + 8}
+          height={halfH * 2 + 8}
+          rx={halfH * 0.45}
+          fill="none"
+          stroke="#3b82f6"
+          strokeWidth={2}
+          strokeOpacity={0.85}
+        />
+      )}
+      <ellipse
+        cx={0}
+        cy={halfH * 0.15}
+        rx={halfW * 0.85}
+        ry={halfH * 0.35}
+        fill="rgba(0,0,0,0.12)"
+      />
+      <rect
+        x={-halfW}
+        y={-halfH}
+        width={halfW * 2}
+        height={halfH * 2}
+        rx={halfH * 0.38}
+        fill={bodyFill}
+        stroke="#ffffff"
+        strokeWidth={strokeW}
+        style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.25))' }}
+      />
+      {/* Front direction wedge (+X) */}
+      <path
+        d={`M ${halfW * 0.15} 0 L ${halfW * 0.92} ${-halfH * 0.5} L ${halfW * 0.92} ${halfH * 0.5} Z`}
+        fill={frontFill}
+        stroke="#ffffff"
+        strokeWidth={strokeW * 0.6}
+      />
+      <circle cx={-halfW * 0.25} cy={0} r={halfH * 0.14} fill="rgba(255,255,255,0.35)" />
+      <circle cx={halfW * 0.1} cy={0} r={halfH * 0.14} fill="rgba(255,255,255,0.35)" />
+    </g>
+  );
+}
+
 /** Compact chevron arrow drawn inside the node circle. */
 function renderInnerNodeArrow(
   yaw: number,
@@ -151,8 +206,8 @@ function renderInnerNodeArrow(
 
 const RobotMap: React.FC<RobotMapProps> = ({ 
   robotName,
+  mapName,
   robots = [],
-  robotSvgPath = '/robots/robot.svg',
   enablePolygonDrawing = false,
   restrictedAreas = [],
   onRestrictedAreasChange,
@@ -200,19 +255,22 @@ const RobotMap: React.FC<RobotMapProps> = ({
     if (!isAddingNode) setPlacingNode(null);
   }, [isAddingNode]);
 
-  // Fetch map data from backend
+  // Fetch map data from backend (by map name or robot)
   useEffect(() => {
-    if (!robotName) return;
+    if (!mapName && !robotName) return;
 
     const fetchMap = async () => {
       try {
-        const response = await fetch(`${BACKEND_URL}/maps/by-robot/${robotName}`);
+        const url = mapName
+          ? `${BACKEND_URL}/maps/${encodeURIComponent(mapName)}`
+          : `${BACKEND_URL}/maps/by-robot/${robotName}`;
+        const response = await fetch(url);
         if (response.ok) {
           const data: MapData = await response.json();
           setMapData(data);
-          console.log(`Map loaded for robot ${robotName}: ${data.map_name} (${data.width_px}x${data.height_px})`);
+          console.log(`Map loaded: ${data.map_name} (${data.width_px}x${data.height_px})`);
         } else {
-          console.error(`Failed to load map for robot: ${robotName}`);
+          console.error(`Failed to load map: ${mapName ?? robotName}`);
         }
       } catch (error) {
         console.error('Error fetching map data:', error);
@@ -220,7 +278,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
     };
 
     fetchMap();
-  }, [robotName]);
+  }, [mapName, robotName]);
 
   // Prohibited zones'ları yükle ve restrictedAreas'a ekle
   useEffect(() => {
@@ -232,7 +290,10 @@ const RobotMap: React.FC<RobotMapProps> = ({
           console.log('Prohibited zones loaded:', zones);
           
           // Prohibited zones'ları RestrictedArea formatına çevir
-          const convertedZones: RestrictedArea[] = zones.map(zone => ({
+          const robotIds = new Set(robots.map((r) => r.id));
+          const convertedZones: RestrictedArea[] = zones
+            .filter((zone) => robotIds.size === 0 || robotIds.has(zone.robot_name))
+            .map(zone => ({
             id: zone._id,
             name: zone.zone_name,
             polygonPoints: zone.polygon_points,
@@ -242,10 +303,8 @@ const RobotMap: React.FC<RobotMapProps> = ({
             isSelected: false
           }));
           
-          // Mevcut restrictedAreas'a ekle (prop olarak gelen alanlar varsa)
           if (onRestrictedAreasChange) {
-            const combinedAreas = [...restrictedAreas, ...convertedZones];
-            onRestrictedAreasChange(combinedAreas);
+            onRestrictedAreasChange(convertedZones);
           }
         }
       } catch (error) {
@@ -254,7 +313,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
     };
 
     loadProhibitedZones();
-  }, []);
+  }, [robots.map((r) => r.id).join(',')]);
 
   const convertToPixel = (position: { x: number; y: number }) => {
     if (mapData) {
@@ -981,90 +1040,55 @@ const RobotMap: React.FC<RobotMapProps> = ({
             {/* Render all robots inside SVG */}
             {robots.map((robot) => {
               const robotPos = convertToPixel(robot.position);
-                            
-              // Robot gerçek boyutları: 100cm x 80cm
-              const robotRealWidth = 1.0; // 100cm = 1.0m
-              const robotRealHeight = 0.8; // 80cm = 0.8m
-              
-              // Map metadata varsa gerçek boyutları pixel'e çevir
-              let robotPixelWidth = 50; // Default fallback
-              let robotPixelHeight = 40; // Default fallback
-              
+              const isSelected = selectedRobotId === robot.id;
+
+              const robotRealWidth = 1.0;
+              const robotRealHeight = 0.8;
+
+              let robotPixelWidth = 36;
+              let robotPixelHeight = 28;
+
               if (mapData) {
                 robotPixelWidth = robotRealWidth / mapData.resolution;
                 robotPixelHeight = robotRealHeight / mapData.resolution;
-                
-                // Minimum boyut kontrolü (çok küçük görünmesin)
-                robotPixelWidth = Math.max(robotPixelWidth, 20);
-                robotPixelHeight = Math.max(robotPixelHeight, 16);
-                
-                // Maximum boyut kontrolü (çok büyük görünmesin)
-                robotPixelWidth = Math.min(robotPixelWidth, 80);
-                robotPixelHeight = Math.min(robotPixelHeight, 64);
+                robotPixelWidth = Math.max(robotPixelWidth, 28);
+                robotPixelHeight = Math.max(robotPixelHeight, 22);
+                robotPixelWidth = Math.min(robotPixelWidth, 72);
+                robotPixelHeight = Math.min(robotPixelHeight, 58);
               }
-              
+
               const halfWidth = robotPixelWidth / 2;
               const halfHeight = robotPixelHeight / 2;
-              
+              const labelFontSize = Math.max(9, Math.min(11, halfWidth * 0.38));
+
               return (
-                <g 
-                  key={`robot-${robot.id}`} 
-                  transform={`translate(${robotPos.x}, ${robotPos.y}) rotate(${robot.orientation})`}
+                <g
+                  key={`robot-${robot.id}`}
+                  transform={`translate(${robotPos.x}, ${robotPos.y}) rotate(${rosYawDegToSvgRotate(robot.orientation)})`}
                   style={{ cursor: 'pointer' }}
                   onClick={(e) => {
                     e.stopPropagation();
                     closeNodePanel();
-                    setSelectedRobotId(selectedRobotId === robot.id ? null : robot.id);
+                    setSelectedRobotId(isSelected ? null : robot.id);
                   }}
                 >
-                  {/* Robot image using foreignObject */}
-                  <foreignObject 
-                    x={-halfWidth} 
-                    y={-halfHeight} 
-                    width={robotPixelWidth} 
-                    height={robotPixelHeight}
-                    style={{ overflow: 'visible' }}
+                  {renderRobotMarker(halfWidth, halfHeight, isSelected)}
+
+                  <text
+                    x={0}
+                    y={-halfHeight - 6}
+                    textAnchor="middle"
+                    fontSize={labelFontSize}
+                    fontWeight="600"
+                    fill="#1a1a1a"
+                    stroke="#ffffff"
+                    strokeWidth={2.5}
+                    paintOrder="stroke"
+                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                    transform={`rotate(${rosYawDegToSvgRotate(-robot.orientation)})`}
                   >
-                    <img 
-                      src={robotSvgPath}
-                      alt={`Robot ${robot.id}`}
-                      style={{
-                        width: '100%',
-                        height: '100%',
-                        filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.3))',
-                        pointerEvents: 'none',
-                        overflow: 'visible',
-                        objectFit: 'contain'
-                      }}
-                    />
-                  </foreignObject>
-                  
-                  {/* Robot label */}
-                  <foreignObject 
-                    x={-halfWidth-4} 
-                    y={-halfHeight + 4} 
-                    width={robotPixelWidth} 
-                    height="14"
-                    style={{ overflow: 'visible' }}
-                  >
-                    <div
-                      style={{
-                        background: 'rgba(0, 0, 0, 0.75)',
-                        color: 'white',
-                        padding: '1px 3px',
-                        borderRadius: '3px',
-                        fontSize: '8px',
-                        fontWeight: '500',
-                        textAlign: 'center',
-                        whiteSpace: 'nowrap',
-                        pointerEvents: 'none',
-                        transform: 'rotate(90deg)',
-                        transformOrigin: 'center center'
-                      }}
-                    >
-                      {robot.id}
-                    </div>
-                  </foreignObject>
+                    {robot.id}
+                  </text>
                 </g>
               );
             })}

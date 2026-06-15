@@ -11,6 +11,23 @@ export class MapsService {
     @InjectModel(RobotInfo.name) private robotInfoModel: Model<RobotInfoDocument>,
   ) {}
 
+  async findAllSummaries(): Promise<
+    Pick<MapRecord, 'map_name' | 'width_px' | 'height_px' | 'resolution'>[]
+  > {
+    return this.mapModel
+      .find({}, { image_png_base64: 0 })
+      .sort({ map_name: 1 })
+      .exec();
+  }
+
+  async findRobotsByMapName(mapName: string): Promise<RobotInfo[]> {
+    const mapRecord = await this.mapModel.findOne({ map_name: mapName }).exec();
+    if (!mapRecord) {
+      throw new NotFoundException(`No map found for map_name: ${mapName}`);
+    }
+    return this.robotInfoModel.find({ map_name: mapName }).sort({ robot_name: 1 }).exec();
+  }
+
   async findByRobotName(robotName: string): Promise<MapRecord> {
     const robotInfo = await this.robotInfoModel.findOne({ robot_name: robotName }).exec();
     if (!robotInfo) {

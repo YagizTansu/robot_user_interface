@@ -91,11 +91,44 @@ const COMMAND_STATUS_LABEL: Record<CommandStatus, string> = {
   cancelled: 'Cancelled',
 };
 
+const MAP_STORAGE_KEY = 'dashboard_selected_map';
+
+interface MapSummary {
+  map_name: string;
+  width_px: number;
+  height_px: number;
+  resolution: number;
+}
+
+interface MapRobotInfo {
+  robot_name: string;
+  active_graph_name?: string;
+}
+
+function offlineRobot(id: string): Robot {
+  return {
+    id,
+    name: id,
+    status: 'offline',
+    battery: 0,
+    position: { x: 0, y: 0 },
+    orientation: 0,
+    currentTask: '',
+    speed: 0,
+    temperature: 0,
+    capabilities: { maxSpeed: 0, maxPayload: 0, sensors: [] },
+  };
+}
+
 function DashboardContent() {
   const [robots, setRobots] = useState<Robot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedRobot, setSelectedRobot] = useState<Robot | null>(null);
+  const [maps, setMaps] = useState<MapSummary[]>([]);
+  const [mapsLoading, setMapsLoading] = useState(true);
+  const [selectedMapName, setSelectedMapName] = useState<string | null>(null);
+  const [mapRobots, setMapRobots] = useState<MapRobotInfo[]>([]);
+  const [selectedRobotId, setSelectedRobotId] = useState<string | null>(null);
   const [restrictedAreas, setRestrictedAreas] = useState<RestrictedArea[]>([]);
   const [showGraph, setShowGraph] = useState(true);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
@@ -105,45 +138,123 @@ function DashboardContent() {
   const [commandToast, setCommandToast] = useState<string | null>(null);
   const isInitialLoad = useRef(true);
 
-  const effectiveRobotId = selectedRobot?.id ?? robots[0]?.id ?? null;
+  const mapRobotNames = useMemo(
+    () => new Set(mapRobots.map((r) => r.robot_name)),
+    [mapRobots]
+  );
 
-  // Sync selected robot when robots list arrives
+  const robotsOnMap = useMemo(
+    () => robots.filter((r) => mapRobotNames.has(r.id)),
+    [robots, mapRobotNames]
+  );
+
+  const selectableRobots = useMemo(() => {
+    const liveIds = new Set(robotsOnMap.map((r) => r.id));
+    const offline = mapRobots
+      .filter((mr) => !liveIds.has(mr.robot_name))
+      .map((mr) => offlineRobot(mr.robot_name));
+    return [...robotsOnMap, ...offline];
+  }, [robotsOnMap, mapRobots]);
+
+  const effectiveRobotId = selectedRobotId ?? selectableRobots[0]?.id ?? null;
+
+  const currentRobot = useMemo(() => {
+    const id = effectiveRobotId;
+    if (!id) return offlineRobot('—');
+    return (
+      robotsOnMap.find((r) => r.id === id) ??
+      selectableRobots.find((r) => r.id === id) ??
+      offlineRobot(id)
+    );
+  }, [effectiveRobotId, robotsOnMap, selectableRobots]);
+
+  // Load available maps
   useEffect(() => {
-    if (robots.length > 0 && !selectedRobot) {
-      setSelectedRobot(robots[0]);
-    }
-  }, [robots, selectedRobot]);
-
-  // Load active graph for the current robot; fallback to latest graph on the same map
-  useEffect(() => {
-    if (!effectiveRobotId) return;
-
-    const loadGraphForRobot = async () => {
+    const loadMaps = async () => {
       try {
-        const activeRes = await fetch(`${BACKEND_URL}/graphs/active/${effectiveRobotId}`);
-        if (activeRes.ok) {
-          const text = await activeRes.text();
-          if (text) {
-            const record = JSON.parse(text);
-            if (record?.graph) {
-              setGraphData(record.graph);
-              setActiveGraphName(record.graph_name ?? null);
-              return;
+        const res = await fetch(`${BACKEND_URL}/maps`);
+        if (!res.ok) throw new Error('Failed to load maps');
+        const data: MapSummary[] = await res.json();
+        setMaps(data);
+
+        if (data.length > 0) {
+          const stored = localStorage.getItem(MAP_STORAGE_KEY);
+          const validStored = stored && data.some((m) => m.map_name === stored);
+          setSelectedMapName(validStored ? stored : data[0].map_name);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load maps');
+      } finally {
+        setMapsLoading(false);
+      }
+    };
+
+    loadMaps();
+  }, []);
+
+  // Load robots registered on the selected map
+  useEffect(() => {
+    if (!selectedMapName) {
+      setMapRobots([]);
+      return;
+    }
+
+    localStorage.setItem(MAP_STORAGE_KEY, selectedMapName);
+
+    const loadMapRobots = async () => {
+      try {
+        const res = await fetch(
+          `${BACKEND_URL}/maps/${encodeURIComponent(selectedMapName)}/robots`
+        );
+        if (res.ok) {
+          setMapRobots(await res.json());
+        } else {
+          setMapRobots([]);
+        }
+      } catch {
+        setMapRobots([]);
+      }
+    };
+
+    loadMapRobots();
+  }, [selectedMapName]);
+
+  // Keep selected robot id in sync with map filter
+  useEffect(() => {
+    if (selectableRobots.length === 0) {
+      setSelectedRobotId(null);
+      return;
+    }
+    setSelectedRobotId((prev) => {
+      if (prev && selectableRobots.some((r) => r.id === prev)) return prev;
+      return selectableRobots[0].id;
+    });
+  }, [selectableRobots, selectedMapName]);
+
+  // Load active graph for the current map / robot
+  useEffect(() => {
+    if (!selectedMapName) return;
+
+    const loadGraphForMap = async () => {
+      try {
+        if (effectiveRobotId) {
+          const activeRes = await fetch(`${BACKEND_URL}/graphs/active/${effectiveRobotId}`);
+          if (activeRes.ok) {
+            const text = await activeRes.text();
+            if (text) {
+              const record = JSON.parse(text);
+              if (record?.graph && record.map_name === selectedMapName) {
+                setGraphData(record.graph);
+                setActiveGraphName(record.graph_name ?? null);
+                return;
+              }
             }
           }
         }
         setActiveGraphName(null);
 
-        // No active graph — fallback to the latest graph for this robot's map
-        const mapRes = await fetch(`${BACKEND_URL}/maps/by-robot/${effectiveRobotId}`);
-        if (!mapRes.ok) {
-          setGraphData({ nodes: [], edges: [] });
-          return;
-        }
-        const mapData = await mapRes.json();
-
         const listRes = await fetch(
-          `${BACKEND_URL}/graphs?map_name=${encodeURIComponent(mapData.map_name)}`
+          `${BACKEND_URL}/graphs?map_name=${encodeURIComponent(selectedMapName)}`
         );
         if (!listRes.ok) {
           setGraphData({ nodes: [], edges: [] });
@@ -170,8 +281,8 @@ function DashboardContent() {
       }
     };
 
-    loadGraphForRobot();
-  }, [effectiveRobotId]);
+    loadGraphForMap();
+  }, [selectedMapName, effectiveRobotId]);
 
   // Poll latest robot command for status display
   useEffect(() => {
@@ -194,20 +305,22 @@ function DashboardContent() {
     return () => clearInterval(interval);
   }, [effectiveRobotId]);
 
-  // useMemo'yu conditional return'lerden önce kullanmalıyız
-  const robotsWithFullData = useMemo(() => 
-    robots.map(robot => ({
-      id: robot.id,
-      name: robot.name,
-      position: robot.position,
-      orientation: robot.orientation,
-      status: robot.status,
-      battery: robot.battery,
-      currentTask: robot.currentTask,
-      speed: robot.speed,
-      temperature: robot.temperature
-    }))
-  , [robots]);
+  // useMemo before conditional returns
+  const robotsWithFullData = useMemo(
+    () =>
+      robotsOnMap.map((robot) => ({
+        id: robot.id,
+        name: robot.name,
+        position: robot.position,
+        orientation: robot.orientation,
+        status: robot.status,
+        battery: robot.battery,
+        currentTask: robot.currentTask,
+        speed: robot.speed,
+        temperature: robot.temperature,
+      })),
+    [robotsOnMap]
+  );
 
   // WebSocket bağlantısı ve robot verilerini alma
   useEffect(() => {
@@ -257,15 +370,15 @@ function DashboardContent() {
     };
   }, []); // Boş dependency array - sadece mount/unmount'ta çalışsın
 
-  if (loading) {
+  if (mapsLoading || loading) {
     return (
       <main className="main-content">
-        <div className="loading">Loading robots...</div>
+        <div className="loading">Loading dashboard...</div>
       </main>
     );
   }
 
-  if (error) {
+  if (error && maps.length === 0) {
     return (
       <main className="main-content">
         <div className="error">Error: {error}</div>
@@ -273,21 +386,21 @@ function DashboardContent() {
     );
   }
 
-  if (robots.length === 0) {
+  if (maps.length === 0) {
     return (
       <main className="main-content">
-        <div className="no-data">No robots found</div>
+        <div className="no-data">No maps found</div>
       </main>
     );
   }
 
-  const currentRobot = selectedRobot || robots[0];
+  const handleMapChange = (mapName: string) => {
+    setSelectedMapName(mapName);
+    setSelectedRobotId(null);
+  };
 
   const handleRobotChange = (robotId: string) => {
-    const robot = robots.find(r => r.id === robotId);
-    if (robot) {
-      setSelectedRobot(robot);
-    }
+    setSelectedRobotId(robotId);
   };
 
   const getStatusDotClass = (status: string) => {
@@ -368,16 +481,39 @@ function DashboardContent() {
     <main className="main-content">
       <div className="dashboard-header">
         <div className="header-left">
+          <div className="map-selector">
+            <label htmlFor="map-select" className="robot-selector-label">Map</label>
+            <select
+              id="map-select"
+              value={selectedMapName ?? ''}
+              onChange={(e) => handleMapChange(e.target.value)}
+            >
+              {maps.map((map) => (
+                <option key={map.map_name} value={map.map_name}>
+                  {map.map_name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="robot-selector">
             <label htmlFor="robot-select" className="robot-selector-label">Robot</label>
             <select
               id="robot-select"
               value={currentRobot.id}
-              onChange={e => handleRobotChange(e.target.value)}
+              onChange={(e) => handleRobotChange(e.target.value)}
+              disabled={selectableRobots.length === 0}
             >
-              {robots.map(robot => (
-                <option key={robot.id} value={robot.id}>{robot.name || robot.id}</option>
-              ))}
+              {selectableRobots.length === 0 ? (
+                <option value="">No robots on map</option>
+              ) : (
+                selectableRobots.map((robot) => (
+                  <option key={robot.id} value={robot.id}>
+                    {robot.name || robot.id}
+                    {robot.status === 'offline' ? ' (offline)' : ''}
+                  </option>
+                ))
+              )}
             </select>
           </div>
 
@@ -454,7 +590,8 @@ function DashboardContent() {
       <div className="map-container">
         <div className="map-wrapper">
           <RobotMap 
-            robotName={currentRobot.id}
+            mapName={selectedMapName ?? undefined}
+            robotName={currentRobot.id !== '—' ? currentRobot.id : undefined}
             robots={robotsWithFullData}
             coordinateSystem={{ 
               type: 'coordinate'
