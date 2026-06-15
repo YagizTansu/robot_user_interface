@@ -3,6 +3,10 @@ import './App.css'
 import Sidebar from './components/Sidebar'
 import DashboardContent from './components/DashboardContent'
 import GraphEditor from './components/GraphEditor'
+import RobotsContent from './components/RobotsContent'
+
+const MAP_STORAGE_KEY = 'dashboard_selected_map';
+const ROBOT_STORAGE_KEY = 'dashboard_selected_robot';
 
 function App() {
   const [activeMenuItem, setActiveMenuItem] = useState('dashboard')
@@ -33,11 +37,13 @@ function App() {
         
         {/* Placeholder for other pages */}
         {activeMenuItem === 'robots' && (
-          <main className="main-content">
-            <div className="grid-container">
-              <h2>Robots Page - Coming Soon</h2>
-            </div>
-          </main>
+          <RobotsContent
+            onOpenDashboard={(mapName, robotName) => {
+              localStorage.setItem(MAP_STORAGE_KEY, mapName);
+              localStorage.setItem(ROBOT_STORAGE_KEY, robotName);
+              setActiveMenuItem('dashboard');
+            }}
+          />
         )}
         
         {activeMenuItem === 'maps' && (

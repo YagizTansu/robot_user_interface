@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { RobotPose, RobotPoseDocument, Robot } from './schemas/robot.schema';
+import { normalizeToEpochMs } from '../common/timestamp.util';
 
 @Injectable()
 export class RobotsService {
@@ -25,6 +26,7 @@ export class RobotsService {
       currentTask: 'Navigation',
       speed: 1.0,
       temperature: 25,
+      lastSeen: normalizeToEpochMs(robotPose.timestamp),
       capabilities: {
         maxSpeed: 2.5,
         maxPayload: 500,

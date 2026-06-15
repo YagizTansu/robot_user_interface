@@ -11,6 +11,7 @@ interface Robot {
   currentTask: string;
   speed: number;
   temperature: number;
+  lastSeen?: number;
   capabilities: {
     maxSpeed: number;
     maxPayload: number;

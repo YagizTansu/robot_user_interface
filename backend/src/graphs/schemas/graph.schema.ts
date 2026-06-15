@@ -29,6 +29,17 @@ export class GraphRecord {
       bidirectional: boolean;
       max_speed: number;
     }[];
+    docking_areas?: {
+      id: string;
+      name: string;
+      x: number;
+      y: number;
+      yaw?: number;
+      width: number;
+      height: number;
+      polygon_points: number[];
+      assigned_node_id?: string;
+    }[];
   } = { nodes: [], edges: [] };
 
   @Prop({ required: true })

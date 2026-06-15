@@ -8,6 +8,7 @@ import { ZonesModule } from './zones/zones.module';
 import { MapsModule } from './maps/maps.module';
 import { GraphsModule } from './graphs/graphs.module';
 import { CommandsModule } from './commands/commands.module';
+import { RobotsInfoModule } from './robots-info/robots-info.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { CommandsModule } from './commands/commands.module';
     MapsModule,
     GraphsModule,
     CommandsModule,
+    RobotsInfoModule,
   ],
   controllers: [AppController],
   providers: [AppService],

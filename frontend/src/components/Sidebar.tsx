@@ -62,7 +62,6 @@ const Sidebar = ({
         </svg>
       ), 
       label: 'Robots',
-      comingSoon: true,
     },
     { 
       id: 'maps', 

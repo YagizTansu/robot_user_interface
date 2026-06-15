@@ -170,6 +170,22 @@
   width: 260px;
 }
 
+.zone-panel-fixed {
+  position: absolute;
+  top: 16px;
+  left: calc(16px + 46px + 10px);
+  z-index: 110;
+  width: 240px;
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(26, 26, 26, 0.1);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(26, 26, 26, 0.04);
+  pointer-events: auto;
+  animation: nodePanelIn 0.2s ease;
+}
+
 .node-panel-header {
   display: flex;
   justify-content: space-between;

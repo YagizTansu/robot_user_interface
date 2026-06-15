@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import '../styles/RobotMap.css';
 import { BACKEND_URL } from '../config';
 
@@ -33,6 +33,9 @@ interface RobotMapProps {
     maxY?: number;
   };
   enablePolygonDrawing?: boolean;
+  /** Dashboard: restricted + docking. Graph Editor: docking only (no red zones). */
+  enableDockingDrawing?: boolean;
+  zonesReadOnly?: boolean;
   restrictedAreas?: RestrictedArea[];
   onRestrictedAreasChange?: (areas: RestrictedArea[]) => void;
   graphData?: GraphData;
@@ -94,9 +97,30 @@ interface GraphEdge {
   max_speed: number;
 }
 
+interface DockingArea {
+  id: string;
+  name: string;
+  x?: number;
+  y?: number;
+  yaw?: number;
+  width?: number;
+  height?: number;
+  polygon_points: number[];
+  assigned_node_id?: string;
+}
+
+interface DockPoseEdit {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  yaw: number;
+}
+
 interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  docking_areas?: DockingArea[];
 }
 
 interface PolygonCreationMode {
@@ -127,6 +151,117 @@ const yawToHandlePos = (yaw: number, distance: number) => ({
 
 const radToDeg = (rad: number) => (rad * 180) / Math.PI;
 const degToRad = (deg: number) => (deg * Math.PI) / 180;
+
+function polygonCentroid(flat: number[]): { x: number; y: number } {
+  let sx = 0;
+  let sy = 0;
+  let n = 0;
+  for (let i = 0; i < flat.length; i += 2) {
+    sx += flat[i];
+    sy += flat[i + 1];
+    n += 1;
+  }
+  return n ? { x: sx / n, y: sy / n } : { x: 0, y: 0 };
+}
+
+function deriveDockingFromPolygon(points: number[]): DockPoseEdit {
+  const pts: { x: number; y: number }[] = [];
+  for (let i = 0; i < points.length; i += 2) {
+    pts.push({ x: points[i], y: points[i + 1] });
+  }
+  if (pts.length < 4) {
+    const c = polygonCentroid(points);
+    return { x: c.x, y: c.y, width: 1, height: 1, yaw: 0 };
+  }
+  const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+  const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+  const e0x = pts[1].x - pts[0].x;
+  const e0y = pts[1].y - pts[0].y;
+  const e1x = pts[2].x - pts[1].x;
+  const e1y = pts[2].y - pts[1].y;
+  const len0 = Math.hypot(e0x, e0y);
+  const len1 = Math.hypot(e1x, e1y);
+  const width = Math.max(len0, len1);
+  const height = Math.min(len0, len1);
+  const yaw = len0 >= len1 ? Math.atan2(e0y, e0x) : Math.atan2(e1y, e1x);
+  return {
+    x: parseFloat(cx.toFixed(2)),
+    y: parseFloat(cy.toFixed(2)),
+    width: parseFloat(Math.max(width, 0.1).toFixed(2)),
+    height: parseFloat(Math.max(height, 0.1).toFixed(2)),
+    yaw: parseFloat(yaw.toFixed(4)),
+  };
+}
+
+function polygonFromDockingParams(
+  x: number,
+  y: number,
+  yaw: number,
+  width: number,
+  height: number
+): number[] {
+  const hw = width / 2;
+  const hh = height / 2;
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  const local = [
+    { lx: -hw, ly: -hh },
+    { lx: hw, ly: -hh },
+    { lx: hw, ly: hh },
+    { lx: -hw, ly: hh },
+  ];
+  const flat: number[] = [];
+  for (const c of local) {
+    flat.push(
+      parseFloat((x + c.lx * cos - c.ly * sin).toFixed(2)),
+      parseFloat((y + c.lx * sin + c.ly * cos).toFixed(2))
+    );
+  }
+  return flat;
+}
+
+function normalizeDockingArea(d: DockingArea): Required<Pick<DockingArea, 'x' | 'y' | 'width' | 'height'>> & DockingArea {
+  if (
+    d.x !== undefined &&
+    d.y !== undefined &&
+    d.width !== undefined &&
+    d.height !== undefined
+  ) {
+    const yaw = d.yaw ?? 0;
+    return {
+      ...d,
+      x: d.x,
+      y: d.y,
+      width: d.width,
+      height: d.height,
+      yaw,
+      polygon_points: polygonFromDockingParams(d.x, d.y, yaw, d.width, d.height),
+    };
+  }
+  if (d.polygon_points?.length >= 8) {
+    const derived = deriveDockingFromPolygon(d.polygon_points);
+    return {
+      ...d,
+      ...derived,
+      polygon_points: polygonFromDockingParams(
+        derived.x,
+        derived.y,
+        derived.yaw,
+        derived.width,
+        derived.height
+      ),
+    };
+  }
+  return {
+    ...d,
+    x: d.x ?? 0,
+    y: d.y ?? 0,
+    width: d.width ?? 1,
+    height: d.height ?? 1,
+    yaw: d.yaw ?? 0,
+    polygon_points: d.polygon_points ?? [],
+  };
+}
 
 /** ROS yaw (degrees, CCW from +X) → SVG rotate. Map Y is flipped; marker front points +X. */
 const rosYawDegToSvgRotate = (yawDeg: number) => -yawDeg;
@@ -210,6 +345,8 @@ const RobotMap: React.FC<RobotMapProps> = ({
   mapName,
   robots = [],
   enablePolygonDrawing = false,
+  enableDockingDrawing = false,
+  zonesReadOnly = false,
   restrictedAreas = [],
   onRestrictedAreasChange,
   graphData,
@@ -241,11 +378,71 @@ const RobotMap: React.FC<RobotMapProps> = ({
   // Polygon creation states
   const [polygonMode, setPolygonMode] = useState<PolygonCreationMode>({ isActive: false, type: 'restricted' });
   const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
+  const [editingZoneName, setEditingZoneName] = useState('');
+  const [editingDockingAreaId, setEditingDockingAreaId] = useState('');
+  const [zoneNameSaving, setZoneNameSaving] = useState(false);
   const [mousePosition, setMousePosition] = useState<Point>({ x: 0, y: 0 });
   const [placingNode, setPlacingNode] = useState<{ rosX: number; rosY: number; yaw: number } | null>(null);
   const [rotatingNodeId, setRotatingNodeId] = useState<string | null>(null);
+  const [draggingDockingId, setDraggingDockingId] = useState<string | null>(null);
+  const [rotatingDockingId, setRotatingDockingId] = useState<string | null>(null);
+  const [editingDockPose, setEditingDockPose] = useState<DockPoseEdit | null>(null);
   const didPanRef = useRef(false);
   const panStartClientRef = useRef({ x: 0, y: 0 });
+
+  const normalizedDockingAreas = useMemo(
+    () => (graphData?.docking_areas ?? []).map(normalizeDockingArea),
+    [graphData?.docking_areas]
+  );
+
+  const dockingAreasForRender = useMemo(
+    (): RestrictedArea[] =>
+      normalizedDockingAreas.map((d) => ({
+        id: d.id,
+        name: d.name,
+        polygonPoints: d.polygon_points,
+        color: '#3b82f6',
+        type: 'polygon' as const,
+        zoneType: 'docking-pallet' as const,
+      })),
+    [normalizedDockingAreas]
+  );
+
+  const allRenderableAreas = restrictedAreas;
+
+  const dockingZoneOptions = dockingAreasForRender;
+
+  const getAssignedDockingArea = (nodeId: string) =>
+    graphData?.docking_areas?.find((a) => a.assigned_node_id === nodeId);
+
+  const assignDockingAreaToNode = (nodeId: string, dockingAreaId: string) => {
+    if (!graphData || !onGraphDataChange) return;
+    const areas = (graphData.docking_areas ?? []).map((a) => {
+      if (!dockingAreaId) {
+        if (a.assigned_node_id === nodeId) return { ...a, assigned_node_id: undefined };
+        return a;
+      }
+      if (a.id === dockingAreaId) return { ...a, assigned_node_id: nodeId };
+      if (a.assigned_node_id === nodeId) return { ...a, assigned_node_id: undefined };
+      return a;
+    });
+    onGraphDataChange({ ...graphData, docking_areas: areas });
+  };
+
+  const isDockingAreaId = (areaId: string) =>
+    normalizedDockingAreas.some((a) => a.id === areaId);
+
+  const canEditDockingPose =
+    !!isGraphEditorMode && !!enableDockingDrawing && !!onGraphDataChange;
+
+  const updateDockingAreaById = (id: string, patch: Partial<DockPoseEdit> & { name?: string }) => {
+    if (!graphData || !onGraphDataChange) return;
+    const areas = (graphData.docking_areas ?? []).map((a) => {
+      if (a.id !== id) return normalizeDockingArea(a);
+      return normalizeDockingArea({ ...a, ...patch });
+    });
+    onGraphDataChange({ ...graphData, docking_areas: areas });
+  };
 
   const closeNodePanel = () => {
     setSelectedNodeId(null);
@@ -281,8 +478,11 @@ const RobotMap: React.FC<RobotMapProps> = ({
     fetchMap();
   }, [mapName, robotName]);
 
-  // Load prohibited zones for the current map
+  const canDrawZones = enablePolygonDrawing || enableDockingDrawing;
+
+  // Load zones from API (Dashboard). Graph Editor loads docking zones in parent.
   useEffect(() => {
+    if (!enablePolygonDrawing) return;
     const activeMapName = mapName ?? mapData?.map_name;
     if (!activeMapName) return;
 
@@ -293,20 +493,18 @@ const RobotMap: React.FC<RobotMapProps> = ({
         );
         if (response.ok) {
           const zones: ProhibitedZone[] = await response.json();
-          const convertedZones: RestrictedArea[] = zones.map((zone) => {
-            const zoneType =
-              zone.zone_type === 'docking-pallet' ? 'docking-pallet' : 'restricted';
-            return {
+          const convertedZones: RestrictedArea[] = zones
+            .filter((zone) => zone.zone_type !== 'docking-pallet')
+            .map((zone) => ({
               id: zone._id,
               name: zone.zone_name,
               polygonPoints: zone.polygon_points,
-              color: zoneType === 'docking-pallet' ? '#3b82f6' : '#ef4444',
+              color: '#ef4444',
               type: 'polygon' as const,
-              zoneType,
+              zoneType: 'restricted' as const,
               mapName: zone.map_name,
               isSelected: false,
-            };
-          });
+            }));
 
           onRestrictedAreasChange?.(convertedZones);
         }
@@ -316,7 +514,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
     };
 
     loadProhibitedZones();
-  }, [mapName, mapData?.map_name]);
+  }, [mapName, mapData?.map_name, enablePolygonDrawing]);
 
   const convertToPixel = (position: { x: number; y: number }) => {
     if (mapData) {
@@ -408,7 +606,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (polygonMode.isActive || draggingNodeId || placingNode || rotatingNodeId || isAddingNode) return;
+    if (polygonMode.isActive || draggingNodeId || placingNode || rotatingNodeId || isAddingNode || draggingDockingId || rotatingDockingId) return;
     didPanRef.current = false;
     panStartClientRef.current = { x: e.clientX, y: e.clientY };
     setIsDragging(true);
@@ -417,6 +615,34 @@ const RobotMap: React.FC<RobotMapProps> = ({
 
   const handleMouseMove = (e: React.MouseEvent) => {
     const svg = e.currentTarget.querySelector('svg');
+
+    // Rotate docking area via handle
+    if (rotatingDockingId && graphData && onGraphDataChange && mapData && svg) {
+      const dock = normalizedDockingAreas.find((d) => d.id === rotatingDockingId);
+      if (dock) {
+        const centerPx = convertRosToPixel(dock.x!, dock.y!);
+        const svgP = getSvgPoint(svg, e.clientX, e.clientY);
+        const yaw = yawFromPixelDelta(svgP.x - centerPx.x, svgP.y - centerPx.y);
+        updateDockingAreaById(rotatingDockingId, { yaw: parseFloat(yaw.toFixed(4)) });
+        if (selectedAreaId === rotatingDockingId) {
+          setEditingDockPose((prev) => (prev ? { ...prev, yaw } : null));
+        }
+      }
+      return;
+    }
+
+    // Drag docking area
+    if (draggingDockingId && graphData && onGraphDataChange && mapData && svg) {
+      const svgP = getSvgPoint(svg, e.clientX, e.clientY);
+      const ros = svgPointToRos(svgP);
+      const x = parseFloat(ros.x.toFixed(2));
+      const y = parseFloat(ros.y.toFixed(2));
+      updateDockingAreaById(draggingDockingId, { x, y });
+      if (selectedAreaId === draggingDockingId) {
+        setEditingDockPose((prev) => (prev ? { ...prev, x, y } : null));
+      }
+      return;
+    }
 
     // Rotate existing node via handle
     if (rotatingNodeId && graphData && onGraphDataChange && mapData && svg) {
@@ -501,6 +727,8 @@ const RobotMap: React.FC<RobotMapProps> = ({
     setDraggingNodeId(null);
     setDragOffset(null);
     setRotatingNodeId(null);
+    setDraggingDockingId(null);
+    setRotatingDockingId(null);
   };
 
   const startPolygonCreation = (type: 'restricted' | 'docking-pallet' = 'restricted') => {
@@ -513,8 +741,31 @@ const RobotMap: React.FC<RobotMapProps> = ({
   };
 
   const selectArea = (areaId: string) => {
+    if (zonesReadOnly && !isDockingAreaId(areaId)) return;
     closeNodePanel();
-    setSelectedAreaId(selectedAreaId === areaId ? null : areaId);
+    const next = selectedAreaId === areaId ? null : areaId;
+    setSelectedAreaId(next);
+    if (next) {
+      if (isDockingAreaId(next)) {
+        const dock = normalizedDockingAreas.find((d) => d.id === next);
+        if (dock) {
+          setEditingZoneName(dock.name);
+          setEditingDockPose({
+            x: dock.x!,
+            y: dock.y!,
+            width: dock.width!,
+            height: dock.height!,
+            yaw: dock.yaw ?? 0,
+          });
+        }
+      } else {
+        const area = restrictedAreas.find((a) => a.id === next);
+        setEditingZoneName(area?.name ?? '');
+        setEditingDockPose(null);
+      }
+    } else {
+      setEditingDockPose(null);
+    }
   };
 
   const handleMapBackgroundClick = () => {
@@ -522,9 +773,10 @@ const RobotMap: React.FC<RobotMapProps> = ({
       didPanRef.current = false;
       return;
     }
-    if (placingNode || rotatingNodeId || draggingNodeId) return;
+    if (placingNode || rotatingNodeId || draggingNodeId || draggingDockingId || rotatingDockingId) return;
     closeNodePanel();
     setSelectedRobotId(null);
+    if (!zonesReadOnly) setSelectedAreaId(null);
   };
 
   const saveAreaToDatabase = async (area: RestrictedArea): Promise<ProhibitedZone | null> => {
@@ -562,6 +814,40 @@ const RobotMap: React.FC<RobotMapProps> = ({
     return null;
   };
 
+  const updateZoneNameInDatabase = async (areaId: string, name: string) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/zones/${areaId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ zone_name: name }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const saveSelectedZoneName = async () => {
+    if (!selectedAreaId || !editingZoneName.trim()) return;
+    setZoneNameSaving(true);
+
+    if (isDockingAreaId(selectedAreaId) && graphData && onGraphDataChange) {
+      updateDockingAreaById(selectedAreaId, { name: editingZoneName.trim() });
+      setZoneNameSaving(false);
+      return;
+    }
+
+    const ok = await updateZoneNameInDatabase(selectedAreaId, editingZoneName.trim());
+    if (ok && onRestrictedAreasChange) {
+      onRestrictedAreasChange(
+        restrictedAreas.map((a) =>
+          a.id === selectedAreaId ? { ...a, name: editingZoneName.trim() } : a
+        )
+      );
+    }
+    setZoneNameSaving(false);
+  };
+
   const deleteAreaFromDatabase = async (areaId: string) => {
     try {
       const response = await fetch(`${BACKEND_URL}/zones/${areaId}`, {
@@ -583,16 +869,24 @@ const RobotMap: React.FC<RobotMapProps> = ({
 
   const deleteSelectedArea = async () => {
     if (!selectedAreaId) return;
-    
-    const selectedArea = restrictedAreas.find(area => area.id === selectedAreaId);
-    
-    // Eğer veritabanından gelen bir zone ise (MongoDB ObjectId formatında), veritabanından da sil
+
+    if (isDockingAreaId(selectedAreaId) && graphData && onGraphDataChange) {
+      onGraphDataChange({
+        ...graphData,
+        docking_areas: (graphData.docking_areas ?? []).filter((a) => a.id !== selectedAreaId),
+      });
+      setSelectedAreaId(null);
+      setEditingDockPose(null);
+      return;
+    }
+
+    const selectedArea = restrictedAreas.find((area) => area.id === selectedAreaId);
+
     if (selectedArea && selectedArea.type === 'polygon' && selectedArea.id.length === 24) {
       await deleteAreaFromDatabase(selectedArea.id);
     }
-    
-    const updatedAreas = restrictedAreas.filter((area: RestrictedArea) => area.id !== selectedAreaId);
-    onRestrictedAreasChange?.(updatedAreas);
+
+    onRestrictedAreasChange?.(restrictedAreas.filter((area) => area.id !== selectedAreaId));
     setSelectedAreaId(null);
   };
 
@@ -621,9 +915,10 @@ const RobotMap: React.FC<RobotMapProps> = ({
           </svg>
         </button>
         
-        {enablePolygonDrawing && (
+        {canDrawZones && (
           <>
-            <div style={{ height: '8px', pointerEvents: 'none' }} /> {/* Separator */}
+            <div style={{ height: '8px', pointerEvents: 'none' }} />
+            {enablePolygonDrawing && (
             <button 
               className={`zoom-btn ${polygonMode.isActive && polygonMode.type === 'restricted' ? 'active' : ''}`} 
               onClick={() => polygonMode.isActive ? stopPolygonCreation() : startPolygonCreation('restricted')}
@@ -635,10 +930,12 @@ const RobotMap: React.FC<RobotMapProps> = ({
                 <line x1="15" y1="9" x2="9" y2="15"/>
               </svg>
             </button>
+            )}
+            {enableDockingDrawing && (
             <button 
               className={`zoom-btn ${polygonMode.isActive && polygonMode.type === 'docking-pallet' ? 'active docking' : ''}`} 
               onClick={() => polygonMode.isActive ? stopPolygonCreation() : startPolygonCreation('docking-pallet')}
-              title={polygonMode.isActive ? "Cancel Drawing" : "Draw Docking/Pallet Area"}
+              title={polygonMode.isActive ? "Cancel Drawing" : "Draw Docking Area"}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
@@ -646,6 +943,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
                 <circle cx="12" cy="12" r="2"/>
               </svg>
             </button>
+            )}
             {selectedAreaId && (
               <button 
                 className="zoom-btn" 
@@ -759,17 +1057,40 @@ const RobotMap: React.FC<RobotMapProps> = ({
                     rosCoordinates.push(parseFloat(rosX.toFixed(2)), parseFloat(rosYCoord.toFixed(2)));
                   });
                   
+                  const isDockingDraw = polygonMode.type === 'docking-pallet';
                   const draftArea: RestrictedArea = {
                     id: `area-${Date.now()}`,
-                    name: `${polygonMode.type === 'restricted' ? 'Restricted' : 'Docking'} Area ${restrictedAreas.length + 1}`,
+                    name: `${isDockingDraw ? 'Docking' : 'Restricted'} Area ${
+                      isDockingDraw
+                        ? (graphData?.docking_areas?.length ?? 0) + 1
+                        : restrictedAreas.length + 1
+                    }`,
                     startPoint: polygonMode.startPoint,
                     endPoint: clickPoint,
                     polygonPoints: rosCoordinates,
-                    color: polygonMode.type === 'restricted' ? '#ef4444' : '#3b82f6',
+                    color: isDockingDraw ? '#3b82f6' : '#ef4444',
                     type: 'polygon',
                     zoneType: polygonMode.type,
                     mapName: mapName ?? mapData?.map_name,
                   };
+
+                  if (isDockingDraw) {
+                    if (graphData && onGraphDataChange) {
+                      const pose = deriveDockingFromPolygon(rosCoordinates);
+                      const newDock = normalizeDockingArea({
+                        id: `dock_${Date.now()}`,
+                        name: draftArea.name,
+                        polygon_points: rosCoordinates,
+                        ...pose,
+                      });
+                      onGraphDataChange({
+                        ...graphData,
+                        docking_areas: [...(graphData.docking_areas ?? []), newDock],
+                      });
+                    }
+                    stopPolygonCreation();
+                    return;
+                  }
 
                   void (async () => {
                     const savedZone = await saveAreaToDatabase(draftArea);
@@ -794,6 +1115,18 @@ const RobotMap: React.FC<RobotMapProps> = ({
                 height={mapData.height_px}
               />
             )}
+            <defs>
+              <marker
+                id="dock-link-arrow"
+                markerWidth="8"
+                markerHeight="8"
+                refX="6"
+                refY="4"
+                orient="auto"
+              >
+                <path d="M0,0 L8,4 L0,8 Z" fill="#2563eb" />
+              </marker>
+            </defs>
             {/* Render graph edges (paths) first so they appear behind nodes */}
             {showGraph && graphData?.edges.map((edge, index) => {
               const fromNode = graphData.nodes.find(n => n.id === edge.from);
@@ -860,7 +1193,8 @@ const RobotMap: React.FC<RobotMapProps> = ({
               const isSelected = selectedNodeId === node.id;
               const isSelectedForEdge = selectedNodeForEdge === node.id;
               const isDraggingThis = draggingNodeId === node.id;
-              const nodeColor = isSelected || isDraggingThis ? '#059669' : isSelectedForEdge ? '#f59e0b' : '#10b981';
+              const hasDocking = !!getAssignedDockingArea(node.id);
+              const nodeColor = isSelected || isDraggingThis ? '#059669' : isSelectedForEdge ? '#f59e0b' : hasDocking ? '#2563eb' : '#10b981';
               const radius = getNodeRadius(isSelected, isDraggingThis, isSelectedForEdge);
               const handlePos = yawToHandlePos(yaw, radius + 2.5);
               const nodeOpacity = isDraggingThis ? 0.75 : 0.95;
@@ -938,7 +1272,17 @@ const RobotMap: React.FC<RobotMapProps> = ({
                           if (graphData && onGraphDataChange) {
                             const updatedNodes = graphData.nodes.filter(n => n.id !== node.id);
                             const updatedEdges = graphData.edges.filter(ed => ed.from !== node.id && ed.to !== node.id);
-                            onGraphDataChange({ nodes: updatedNodes, edges: updatedEdges });
+                            const updatedDocking = (graphData.docking_areas ?? []).map((a) =>
+                              a.assigned_node_id === node.id
+                                ? { ...a, assigned_node_id: undefined }
+                                : a
+                            );
+                            onGraphDataChange({
+                              ...graphData,
+                              nodes: updatedNodes,
+                              edges: updatedEdges,
+                              docking_areas: updatedDocking,
+                            });
                             setSelectedNodeId(null);
                           }
                         }}
@@ -951,19 +1295,16 @@ const RobotMap: React.FC<RobotMapProps> = ({
               );
             })}
 
-            {/* Render existing restricted areas */}
-            {restrictedAreas.map((area: RestrictedArea) => {
+            {/* Render restricted areas */}
+            {allRenderableAreas.map((area: RestrictedArea) => {
               const isSelected = selectedAreaId === area.id;
-              
-              // Polygon tipindeki alanlar için
+              const glowColor = 'rgba(239, 68, 68, 0.4)';
               if (area.type === 'polygon' && area.polygonPoints) {
-                // polygon_points'i [x1, y1, x2, y2, ...] formatından SVG points formatına çevir
                 const points = area.polygonPoints
                   .reduce((acc, val, idx) => {
                     if (idx % 2 === 0) {
                       const x = val;
                       const y = area.polygonPoints![idx + 1];
-                      // ROS koordinatlarını pixel'e çevir
                       if (mapData) {
                         const pixelPos = convertRosToPixel(x, y);
                         acc.push(`${pixelPos.x},${pixelPos.y}`);
@@ -980,29 +1321,28 @@ const RobotMap: React.FC<RobotMapProps> = ({
                     <polygon
                       points={points}
                       fill={area.color}
-                      fillOpacity="0.3"
+                      fillOpacity={0.3}
                       stroke={area.color}
-                      strokeWidth={isSelected ? "3" : "2"}
-                      strokeDasharray={isSelected ? "8,4" : "5,5"}
+                      strokeWidth={isSelected ? '3' : '2'}
+                      strokeDasharray={isSelected ? '8,4' : '5,5'}
                       style={{
-                        pointerEvents: 'auto',
-                        cursor: 'pointer',
-                        filter: isSelected ? 'drop-shadow(0 0 8px rgba(239, 68, 68, 0.4))' : 'none'
+                        pointerEvents: zonesReadOnly ? 'none' : 'auto',
+                        cursor: zonesReadOnly ? 'default' : 'pointer',
+                        filter: isSelected ? `drop-shadow(0 0 8px ${glowColor})` : 'none',
                       }}
                       onClick={(e) => {
                         e.stopPropagation();
                         selectArea(area.id);
                       }}
                     />
-                    {/* Zone ismi göster */}
                     {area.polygonPoints.length >= 2 && mapData && (
                       <text
                         x={convertRosToPixel(area.polygonPoints[0], area.polygonPoints[1]).x}
-                        y={convertRosToPixel(area.polygonPoints[0], area.polygonPoints[1]).y}
+                        y={convertRosToPixel(area.polygonPoints[0], area.polygonPoints[1]).y - 6}
                         fill={area.color}
                         fontSize="12"
                         fontWeight="bold"
-                        style={{ userSelect: 'none' }}
+                        style={{ userSelect: 'none', pointerEvents: 'none' }}
                       >
                         {area.name}
                       </text>
@@ -1011,11 +1351,9 @@ const RobotMap: React.FC<RobotMapProps> = ({
                 );
               }
               
-              // Rectangle tipindeki alanlar için (eski format)
               if (area.startPoint && area.endPoint) {
                 const startPos = area.startPoint;
                 const endPos = area.endPoint;
-                
                 const x = Math.min(startPos.x, endPos.x);
                 const y = Math.min(startPos.y, endPos.y);
                 const width = Math.abs(endPos.x - startPos.x);
@@ -1049,6 +1387,120 @@ const RobotMap: React.FC<RobotMapProps> = ({
               
               return null;
             })}
+
+            {/* Render docking areas (graph-owned) */}
+            {normalizedDockingAreas.map((dock) => {
+              if (!mapData) return null;
+              const isSelected = selectedAreaId === dock.id;
+              const isDraggingThis = draggingDockingId === dock.id;
+              const assignedNode = dock.assigned_node_id
+                ? graphData?.nodes.find((n) => n.id === dock.assigned_node_id)
+                : undefined;
+              const centerPx = convertRosToPixel(dock.x!, dock.y!);
+              const wPx = dock.width! / mapData.resolution;
+              const hPx = dock.height! / mapData.resolution;
+              const yaw = dock.yaw ?? 0;
+              const svgRotate = -radToDeg(yaw);
+              const handleLocalX = wPx / 2 + 8;
+              const canInteract = canEditDockingPose;
+
+              return (
+                <g
+                  key={dock.id}
+                  transform={`translate(${centerPx.x}, ${centerPx.y}) rotate(${svgRotate})`}
+                >
+                  <rect
+                    x={-wPx / 2}
+                    y={-hPx / 2}
+                    width={wPx}
+                    height={hPx}
+                    fill="#3b82f6"
+                    fillOpacity={assignedNode ? 0.4 : 0.3}
+                    stroke="#3b82f6"
+                    strokeWidth={isSelected || assignedNode ? 3 : 2}
+                    strokeDasharray={isSelected ? '8,4' : '4,3'}
+                    style={{
+                      pointerEvents: 'auto',
+                      cursor: canInteract ? (isDraggingThis ? 'grabbing' : 'grab') : 'pointer',
+                      filter: isSelected ? 'drop-shadow(0 0 8px rgba(59, 130, 246, 0.5))' : 'none',
+                    }}
+                    onMouseDown={(e) => {
+                      if (!canInteract) return;
+                      e.stopPropagation();
+                      setDraggingDockingId(dock.id);
+                      setIsDragging(false);
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      selectArea(dock.id);
+                    }}
+                  />
+                  {/* Orientation arrow at center */}
+                  <g style={{ pointerEvents: 'none' }}>
+                    {renderInnerNodeArrow(0, Math.min(wPx, hPx) * 0.18, {
+                      arrowColor: '#1d4ed8',
+                      opacity: 0.95,
+                    })}
+                  </g>
+                  {canInteract && isSelected && (
+                    <circle
+                      cx={handleLocalX}
+                      cy={0}
+                      r="5"
+                      fill="#1a1a1a"
+                      stroke="#ffffff"
+                      strokeWidth="1.5"
+                      style={{ cursor: 'grab', pointerEvents: 'auto' }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        setRotatingDockingId(dock.id);
+                        setIsDragging(false);
+                      }}
+                    />
+                  )}
+                  <text
+                    x={-wPx / 2}
+                    y={-hPx / 2 - 6}
+                    fill="#3b82f6"
+                    fontSize="12"
+                    fontWeight="bold"
+                    style={{ userSelect: 'none', pointerEvents: 'none' }}
+                    transform={`rotate(${-svgRotate})`}
+                  >
+                    {dock.name}
+                    {assignedNode ? ` → ${assignedNode.description || assignedNode.id}` : ''}
+                  </text>
+                </g>
+              );
+            })}
+
+            {/* Node ↔ docking area links (on top of zones & nodes) */}
+            {(showGraph || isGraphEditorMode) &&
+              normalizedDockingAreas.map((dock) => {
+                if (!dock.assigned_node_id || !mapData) return null;
+                const node = graphData?.nodes.find((n) => n.id === dock.assigned_node_id);
+                if (!node) return null;
+                const nodePos = convertGraphNodeToPixel(node);
+                const zonePos = convertRosToPixel(dock.x!, dock.y!);
+                const isHighlighted = selectedNodeId === node.id || selectedAreaId === dock.id;
+                return (
+                  <g key={`dock-link-${dock.id}`} style={{ pointerEvents: 'none' }}>
+                    <line
+                      x1={nodePos.x}
+                      y1={nodePos.y}
+                      x2={zonePos.x}
+                      y2={zonePos.y}
+                      stroke="#2563eb"
+                      strokeWidth={isHighlighted ? 3.5 : 2.5}
+                      strokeDasharray="8,5"
+                      opacity={0.95}
+                      markerEnd="url(#dock-link-arrow)"
+                    />
+                    <circle cx={nodePos.x} cy={nodePos.y} r={4} fill="#2563eb" fillOpacity={0.9} />
+                    <circle cx={zonePos.x} cy={zonePos.y} r={5} fill="#3b82f6" stroke="#fff" strokeWidth={1.5} />
+                  </g>
+                );
+              })}
 
             {/* Render all robots inside SVG */}
             {robots.map((robot) => {
@@ -1279,18 +1731,56 @@ const RobotMap: React.FC<RobotMapProps> = ({
                     }}
                   />
                 </div>
+                <div>
+                  <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>
+                    Docking Area:
+                  </label>
+                  <select
+                    value={editingDockingAreaId}
+                    onChange={(e) => setEditingDockingAreaId(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '6px 8px',
+                      fontSize: '12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                    }}
+                  >
+                    <option value="">— None —</option>
+                    {dockingZoneOptions.map((z) => (
+                      <option key={z.id} value={z.id}>{z.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                   <button
                     onClick={() => {
                       if (graphData && onGraphDataChange && editingNode) {
-                        const updatedNodes = graphData.nodes.map(n => 
+                        const updatedNodes = graphData.nodes.map((n) =>
                           n.id === editingNode.id ? editingNode : n
                         );
+                        const areas = (graphData.docking_areas ?? []).map((a) => {
+                          if (!editingDockingAreaId) {
+                            if (a.assigned_node_id === editingNode.id) {
+                              return { ...a, assigned_node_id: undefined };
+                            }
+                            return a;
+                          }
+                          if (a.id === editingDockingAreaId) {
+                            return { ...a, assigned_node_id: editingNode.id };
+                          }
+                          if (a.assigned_node_id === editingNode.id) {
+                            return { ...a, assigned_node_id: undefined };
+                          }
+                          return a;
+                        });
                         onGraphDataChange({
                           ...graphData,
-                          nodes: updatedNodes
+                          nodes: updatedNodes,
+                          docking_areas: areas,
                         });
                         setEditingNode(null);
+                        setEditingDockingAreaId('');
                         setSelectedNodeId(null);
                       }
                     }}
@@ -1349,7 +1839,44 @@ const RobotMap: React.FC<RobotMapProps> = ({
                       {radToDeg(getNodeYaw(selectedNode)).toFixed(1)}°
                     </span>
                   </div>
+                  {getAssignedDockingArea(selectedNode.id) && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: '#6b7280' }}>Docking:</span>
+                      <span style={{ color: '#2563eb', fontWeight: '500' }}>
+                        {getAssignedDockingArea(selectedNode.id)?.name ?? 'Assigned'}
+                      </span>
+                    </div>
+                  )}
                 </div>
+                {isGraphEditorMode && (
+                  <div style={{ marginTop: '8px' }}>
+                    <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>
+                      Docking Area (1 node ↔ 1 area)
+                    </label>
+                    <select
+                      value={getAssignedDockingArea(selectedNode.id)?.id ?? ''}
+                      onChange={(e) => assignDockingAreaToNode(selectedNode.id, e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '6px 8px',
+                        fontSize: '12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        background: '#fff',
+                      }}
+                    >
+                      <option value="">— None —</option>
+                      {dockingZoneOptions.map((z) => (
+                        <option key={z.id} value={z.id}>{z.name}</option>
+                      ))}
+                    </select>
+                    {dockingZoneOptions.length === 0 && (
+                      <p style={{ margin: '6px 0 0', fontSize: '11px', color: '#9ca3af' }}>
+                        Draw docking areas with the blue map tool (zoom controls).
+                      </p>
+                    )}
+                  </div>
+                )}
                 {enableSendRobot && onSendRobotToNode && (
                   <button
                     onClick={() => onSendRobotToNode(selectedNode)}
@@ -1380,7 +1907,10 @@ const RobotMap: React.FC<RobotMapProps> = ({
                 )}
                 {isGraphEditorMode && (
                   <button
-                    onClick={() => setEditingNode({ ...selectedNode, yaw: selectedNode.yaw ?? 0 })}
+                    onClick={() => {
+                      setEditingNode({ ...selectedNode, yaw: selectedNode.yaw ?? 0 });
+                      setEditingDockingAreaId(getAssignedDockingArea(selectedNode.id)?.id ?? '');
+                    }}
                     style={{
                       width: '100%',
                       marginTop: '8px',
@@ -1398,6 +1928,238 @@ const RobotMap: React.FC<RobotMapProps> = ({
                   </button>
                 )}
               </>
+            )}
+          </div>
+        );
+      })()}
+
+      {selectedAreaId && (isDockingAreaId(selectedAreaId) || (canDrawZones && !zonesReadOnly)) && (() => {
+        const isDocking = isDockingAreaId(selectedAreaId);
+        const dock = isDocking ? normalizedDockingAreas.find((d) => d.id === selectedAreaId) : undefined;
+        const restrictedArea = !isDocking ? restrictedAreas.find((a) => a.id === selectedAreaId) : undefined;
+        if (!dock && !restrictedArea) return null;
+
+        const inputStyle = {
+          width: '100%',
+          padding: '6px 8px',
+          fontSize: '12px',
+          border: '1px solid #d1d5db',
+          borderRadius: '6px',
+          boxSizing: 'border-box' as const,
+        };
+
+        const saveDockPose = () => {
+          if (!editingDockPose || !selectedAreaId) return;
+          updateDockingAreaById(selectedAreaId, {
+            ...editingDockPose,
+            name: editingZoneName.trim() || dock?.name,
+          });
+        };
+
+        return (
+          <div className="zone-panel-fixed" onClick={(e) => e.stopPropagation()}>
+            <div className="node-panel-header">
+              <h4 className="node-panel-title">
+                {isDocking ? 'Docking Area' : 'Restricted Zone'}
+              </h4>
+              <button
+                type="button"
+                className="node-panel-close"
+                onClick={() => {
+                  setSelectedAreaId(null);
+                  setEditingDockPose(null);
+                }}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            {isDocking && dock && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '6px',
+                  marginBottom: '10px',
+                  fontSize: '12px',
+                }}
+              >
+                <div style={{ gridColumn: '1 / -1', color: '#6b7280', fontSize: '11px' }}>Position (m)</div>
+                <div>
+                  <span style={{ color: '#6b7280', fontSize: '11px' }}>X</span>
+                  {canEditDockingPose && editingDockPose ? (
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editingDockPose.x}
+                      onChange={(e) =>
+                        setEditingDockPose({ ...editingDockPose, x: parseFloat(e.target.value) || 0 })
+                      }
+                      style={{ ...inputStyle, marginTop: '2px' }}
+                    />
+                  ) : (
+                    <div style={{ fontWeight: 600, color: '#1a1a1a' }}>{dock.x!.toFixed(2)}</div>
+                  )}
+                </div>
+                <div>
+                  <span style={{ color: '#6b7280', fontSize: '11px' }}>Y</span>
+                  {canEditDockingPose && editingDockPose ? (
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editingDockPose.y}
+                      onChange={(e) =>
+                        setEditingDockPose({ ...editingDockPose, y: parseFloat(e.target.value) || 0 })
+                      }
+                      style={{ ...inputStyle, marginTop: '2px' }}
+                    />
+                  ) : (
+                    <div style={{ fontWeight: 600, color: '#1a1a1a' }}>{dock.y!.toFixed(2)}</div>
+                  )}
+                </div>
+                <div style={{ gridColumn: '1 / -1', color: '#6b7280', fontSize: '11px', marginTop: '4px' }}>
+                  Size (m)
+                </div>
+                <div>
+                  <span style={{ color: '#6b7280', fontSize: '11px' }}>Width</span>
+                  {canEditDockingPose && editingDockPose ? (
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.1"
+                      value={editingDockPose.width}
+                      onChange={(e) =>
+                        setEditingDockPose({
+                          ...editingDockPose,
+                          width: Math.max(0.1, parseFloat(e.target.value) || 0.1),
+                        })
+                      }
+                      style={{ ...inputStyle, marginTop: '2px' }}
+                    />
+                  ) : (
+                    <div style={{ fontWeight: 600, color: '#1a1a1a' }}>{dock.width!.toFixed(2)}</div>
+                  )}
+                </div>
+                <div>
+                  <span style={{ color: '#6b7280', fontSize: '11px' }}>Height</span>
+                  {canEditDockingPose && editingDockPose ? (
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.1"
+                      value={editingDockPose.height}
+                      onChange={(e) =>
+                        setEditingDockPose({
+                          ...editingDockPose,
+                          height: Math.max(0.1, parseFloat(e.target.value) || 0.1),
+                        })
+                      }
+                      style={{ ...inputStyle, marginTop: '2px' }}
+                    />
+                  ) : (
+                    <div style={{ fontWeight: 600, color: '#1a1a1a' }}>{dock.height!.toFixed(2)}</div>
+                  )}
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <span style={{ color: '#6b7280', fontSize: '11px' }}>Orientation (°)</span>
+                  {canEditDockingPose && editingDockPose ? (
+                    <input
+                      type="number"
+                      step="1"
+                      value={radToDeg(editingDockPose.yaw).toFixed(1)}
+                      onChange={(e) =>
+                        setEditingDockPose({
+                          ...editingDockPose,
+                          yaw: degToRad(parseFloat(e.target.value) || 0),
+                        })
+                      }
+                      style={{ ...inputStyle, marginTop: '2px' }}
+                    />
+                  ) : (
+                    <div style={{ fontWeight: 600, color: '#2563eb' }}>
+                      {radToDeg(dock.yaw ?? 0).toFixed(1)}°
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>
+              Name
+            </label>
+            <input
+              type="text"
+              value={editingZoneName}
+              onChange={(e) => setEditingZoneName(e.target.value)}
+              readOnly={isDocking ? !canEditDockingPose : false}
+              style={{ ...inputStyle, marginBottom: '8px' }}
+            />
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {isDocking && canEditDockingPose && (
+                <button
+                  type="button"
+                  onClick={saveDockPose}
+                  disabled={!editingDockPose}
+                  style={{
+                    flex: 1,
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#fff',
+                    background: '#2563eb',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Apply Pose
+                </button>
+              )}
+              {(!isDocking || canEditDockingPose) && (
+                <button
+                  type="button"
+                  onClick={saveSelectedZoneName}
+                  disabled={zoneNameSaving || !editingZoneName.trim()}
+                  style={{
+                    flex: 1,
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#fff',
+                    background: '#1a1a1a',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: zoneNameSaving ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {zoneNameSaving ? 'Saving…' : isDocking ? 'Save Name' : 'Save Name'}
+                </button>
+              )}
+              {canEditDockingPose || !isDocking ? (
+                <button
+                  type="button"
+                  onClick={deleteSelectedArea}
+                  style={{
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    fontWeight: '500',
+                    color: '#ef4444',
+                    background: 'rgba(239, 68, 68, 0.08)',
+                    border: '1px solid rgba(239, 68, 68, 0.35)',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Delete
+                </button>
+              ) : null}
+            </div>
+            {isDocking && canEditDockingPose && (
+              <p style={{ margin: '8px 0 0', fontSize: '11px', color: '#9ca3af' }}>
+                Drag to move · use the handle to rotate (like nodes)
+              </p>
             )}
           </div>
         );

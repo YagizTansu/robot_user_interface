@@ -21,9 +21,22 @@ interface GraphEdge {
   max_speed: number;
 }
 
+interface DockingArea {
+  id: string;
+  name: string;
+  x?: number;
+  y?: number;
+  yaw?: number;
+  width?: number;
+  height?: number;
+  polygon_points: number[];
+  assigned_node_id?: string;
+}
+
 interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  docking_areas?: DockingArea[];
 }
 
 interface GraphMeta {
@@ -33,31 +46,28 @@ interface GraphMeta {
   timestamp: number;
 }
 
-interface Point {
-  x: number;
-  y: number;
+const GRAPH_EDITOR_MAP_KEY = 'graph_editor_selected_map';
+const GRAPH_EDITOR_ROBOT_KEY = 'graph_editor_selected_robot';
+
+interface MapSummary {
+  map_name: string;
 }
 
-interface RestrictedArea {
-  id: string;
-  name: string;
-  startPoint?: Point;
-  endPoint?: Point;
-  color: string;
-  type: 'restricted' | 'docking-pallet' | 'polygon';
-  isSelected?: boolean;
+interface MapRobotInfo {
+  robot_name: string;
+  active_graph_name?: string;
 }
-
-const ROBOT_NAME = 'agv001';
 
 function GraphEditor() {
+  const [maps, setMaps] = useState<MapSummary[]>([]);
   const [mapName, setMapName] = useState<string | null>(null);
+  const [mapRobots, setMapRobots] = useState<MapRobotInfo[]>([]);
+  const [selectedRobotName, setSelectedRobotName] = useState<string | null>(null);
   const [graphList, setGraphList] = useState<GraphMeta[]>([]);
   const [selectedGraphId, setSelectedGraphId] = useState<string | null>(null);
   const [activeGraphName, setActiveGraphName] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [editingGraphName, setEditingGraphName] = useState('');
-  const [restrictedAreas, setRestrictedAreas] = useState<RestrictedArea[]>([]);
   const [showGraph, setShowGraph] = useState(true);
   const [isAddingNode, setIsAddingNode] = useState(false);
   const [selectedNodeForEdge, setSelectedNodeForEdge] = useState<string | null>(null);
@@ -70,22 +80,93 @@ function GraphEditor() {
   useEffect(() => {
     const init = async () => {
       try {
-        const mapRes = await fetch(`${BACKEND_URL}/maps/by-robot/${ROBOT_NAME}`);
-        if (!mapRes.ok) return;
-        const mapData = await mapRes.json();
-        setMapName(mapData.map_name);
+        const mapsRes = await fetch(`${BACKEND_URL}/maps`);
+        if (!mapsRes.ok) return;
+        const mapList: MapSummary[] = await mapsRes.json();
+        setMaps(mapList);
+        if (mapList.length === 0) return;
 
-        const activeRes = await fetch(`${BACKEND_URL}/graphs/active/${ROBOT_NAME}`);
-        if (activeRes.ok) {
-          const activeGraph = await activeRes.json();
-          if (activeGraph) setActiveGraphName(activeGraph.graph_name);
-        }
+        const storedMap = localStorage.getItem(GRAPH_EDITOR_MAP_KEY);
+        const validMap = storedMap && mapList.some((m) => m.map_name === storedMap);
+        const initialMap = validMap ? storedMap! : mapList[0].map_name;
+        setMapName(initialMap);
+
+        const storedRobot = localStorage.getItem(GRAPH_EDITOR_ROBOT_KEY);
+        if (storedRobot) setSelectedRobotName(storedRobot);
       } catch (e) {
         console.error('Init error:', e);
       }
     };
     init();
   }, []);
+
+  useEffect(() => {
+    if (!mapName) {
+      setMapRobots([]);
+      return;
+    }
+    localStorage.setItem(GRAPH_EDITOR_MAP_KEY, mapName);
+
+    const loadMapRobots = async () => {
+      try {
+        const res = await fetch(
+          `${BACKEND_URL}/maps/${encodeURIComponent(mapName)}/robots`
+        );
+        if (res.ok) {
+          const robots: MapRobotInfo[] = await res.json();
+          setMapRobots(robots);
+          setSelectedRobotName((prev) => {
+            if (prev && robots.some((r) => r.robot_name === prev)) return prev;
+            return robots[0]?.robot_name ?? null;
+          });
+        } else {
+          setMapRobots([]);
+          setSelectedRobotName(null);
+        }
+      } catch {
+        setMapRobots([]);
+        setSelectedRobotName(null);
+      }
+    };
+    loadMapRobots();
+
+    setSelectedGraphId(null);
+    setGraphData(null);
+    setIsAddingNode(false);
+    setSelectedNodeForEdge(null);
+  }, [mapName]);
+
+  useEffect(() => {
+    if (selectedRobotName) {
+      localStorage.setItem(GRAPH_EDITOR_ROBOT_KEY, selectedRobotName);
+    }
+  }, [selectedRobotName]);
+
+  useEffect(() => {
+    if (!selectedRobotName) {
+      setActiveGraphName(null);
+      return;
+    }
+    const loadActive = async () => {
+      try {
+        const activeRes = await fetch(`${BACKEND_URL}/graphs/active/${selectedRobotName}`);
+        if (activeRes.ok) {
+          const text = await activeRes.text();
+          if (text) {
+            const activeGraph = JSON.parse(text);
+            if (activeGraph?.graph_name) {
+              setActiveGraphName(activeGraph.graph_name);
+              return;
+            }
+          }
+        }
+        setActiveGraphName(null);
+      } catch {
+        setActiveGraphName(null);
+      }
+    };
+    loadActive();
+  }, [selectedRobotName, mapName]);
 
   useEffect(() => {
     if (!mapName) return;
@@ -109,7 +190,12 @@ function GraphEditor() {
         const res = await fetch(`${BACKEND_URL}/graphs/${selectedGraphId}`);
         if (res.ok) {
           const record = await res.json();
-          setGraphData(record.graph);
+          const g = record.graph ?? { nodes: [], edges: [] };
+          setGraphData({
+            nodes: g.nodes ?? [],
+            edges: g.edges ?? [],
+            docking_areas: g.docking_areas ?? [],
+          });
           setEditingGraphName(record.graph_name);
         }
       } catch (e) {
@@ -145,11 +231,16 @@ function GraphEditor() {
         if (!Array.isArray(inner.nodes) || !Array.isArray(inner.edges)) {
           showStatus('Invalid graph JSON'); return;
         }
+        const normalized: GraphData = {
+          nodes: inner.nodes,
+          edges: inner.edges,
+          docking_areas: inner.docking_areas ?? [],
+        };
         const graphName = file.name.replace(/\.json$/i, '');
         const res = await fetch(`${BACKEND_URL}/graphs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ graph_name: graphName, map_name: mapName, graph: inner }),
+          body: JSON.stringify({ graph_name: graphName, map_name: mapName, graph: normalized }),
         });
         if (res.ok) {
           const saved = await res.json();
@@ -184,10 +275,18 @@ function GraphEditor() {
   };
 
   const handleActivate = async () => {
-    if (!selectedGraphId) return;
-    const res = await fetch(`${BACKEND_URL}/graphs/${selectedGraphId}/activate/${ROBOT_NAME}`, { method: 'PUT' });
-    if (res.ok) { setActiveGraphName(editingGraphName); showStatus(`"${editingGraphName}" activated on ${ROBOT_NAME}`); }
-    else showStatus('Activation failed');
+    if (!selectedGraphId || !selectedRobotName) {
+      showStatus('Select a robot to activate this graph');
+      return;
+    }
+    const res = await fetch(
+      `${BACKEND_URL}/graphs/${selectedGraphId}/activate/${encodeURIComponent(selectedRobotName)}`,
+      { method: 'PUT' }
+    );
+    if (res.ok) {
+      setActiveGraphName(editingGraphName);
+      showStatus(`"${editingGraphName}" activated on ${selectedRobotName}`);
+    } else showStatus('Activation failed');
   };
 
   const handleDelete = async () => {
@@ -199,13 +298,17 @@ function GraphEditor() {
   };
 
   const handleNewGraph = async () => {
-    if (!mapName) { showStatus('No map loaded'); return; }
+    if (!mapName) { showStatus('Select a map first'); return; }
     const name = newGraphName.trim();
     if (!name) return;
     const res = await fetch(`${BACKEND_URL}/graphs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ graph_name: name, map_name: mapName, graph: { nodes: [], edges: [] } }),
+      body: JSON.stringify({
+        graph_name: name,
+        map_name: mapName,
+        graph: { nodes: [], edges: [], docking_areas: [] },
+      }),
     });
     if (res.ok) {
       const saved = await res.json();
@@ -251,6 +354,47 @@ function GraphEditor() {
         <div className="panel-header">
           <h2>Graph Editor</h2>
           <p className="panel-header-sub">Manage navigation graphs</p>
+        </div>
+
+        <div className="panel-section">
+          <label className="panel-section-label">Map</label>
+          <select
+            className="panel-select"
+            value={mapName ?? ''}
+            onChange={(e) => setMapName(e.target.value || null)}
+            disabled={maps.length === 0}
+          >
+            {maps.length === 0 ? (
+              <option value="">No maps available</option>
+            ) : (
+              maps.map((m) => (
+                <option key={m.map_name} value={m.map_name}>{m.map_name}</option>
+              ))
+            )}
+          </select>
+          {mapName && (
+            <p className="panel-map-hint">
+              Graphs and nodes are created on <strong>{mapName}</strong>
+            </p>
+          )}
+        </div>
+
+        <div className="panel-section">
+          <label className="panel-section-label">Robot (for activate)</label>
+          <select
+            className="panel-select"
+            value={selectedRobotName ?? ''}
+            onChange={(e) => setSelectedRobotName(e.target.value || null)}
+            disabled={mapRobots.length === 0}
+          >
+            {mapRobots.length === 0 ? (
+              <option value="">No robots on this map</option>
+            ) : (
+              mapRobots.map((r) => (
+                <option key={r.robot_name} value={r.robot_name}>{r.robot_name}</option>
+              ))
+            )}
+          </select>
         </div>
 
         <div className="panel-section">
@@ -392,12 +536,10 @@ function GraphEditor() {
         <div className="map-container">
           <div className="map-wrapper">
             <RobotMap
-              robotName={ROBOT_NAME}
+              mapName={mapName ?? undefined}
               robots={[]}
               coordinateSystem={{ type: 'coordinate' }}
-              enablePolygonDrawing={false}
-              restrictedAreas={restrictedAreas}
-              onRestrictedAreasChange={setRestrictedAreas}
+              enableDockingDrawing={!!selectedGraphId && !!mapName}
               graphData={graphData ?? undefined}
               showGraph={showGraph}
               isGraphEditorMode={!!selectedGraphId}
@@ -416,7 +558,9 @@ function GraphEditor() {
         <div className="graph-modal-overlay" onClick={() => setShowNewGraphModal(false)}>
           <div className="graph-modal" onClick={e => e.stopPropagation()}>
             <h3>Create New Graph</h3>
-            <p>Enter a name for the new navigation graph.</p>
+            <p>
+              Create an empty graph on map <strong>{mapName}</strong>.
+            </p>
             <input
               className="panel-input"
               type="text"

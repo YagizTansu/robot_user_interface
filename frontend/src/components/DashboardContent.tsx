@@ -54,9 +54,22 @@ interface GraphEdge {
   max_speed: number;
 }
 
+interface DockingArea {
+  id: string;
+  name: string;
+  x?: number;
+  y?: number;
+  yaw?: number;
+  width?: number;
+  height?: number;
+  polygon_points: number[];
+  assigned_node_id?: string;
+}
+
 interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  docking_areas?: DockingArea[];
 }
 
 type CommandStatus =
@@ -92,6 +105,7 @@ const COMMAND_STATUS_LABEL: Record<CommandStatus, string> = {
 };
 
 const MAP_STORAGE_KEY = 'dashboard_selected_map';
+const ROBOT_STORAGE_KEY = 'dashboard_selected_robot';
 
 interface MapSummary {
   map_name: string;
@@ -207,7 +221,13 @@ function DashboardContent() {
           `${BACKEND_URL}/maps/${encodeURIComponent(selectedMapName)}/robots`
         );
         if (res.ok) {
-          setMapRobots(await res.json());
+          const data = await res.json();
+          setMapRobots(data);
+          const storedRobot = localStorage.getItem(ROBOT_STORAGE_KEY);
+          if (storedRobot && data.some((r: MapRobotInfo) => r.robot_name === storedRobot)) {
+            setSelectedRobotId(storedRobot);
+            localStorage.removeItem(ROBOT_STORAGE_KEY);
+          }
         } else {
           setMapRobots([]);
         }
@@ -245,7 +265,11 @@ function DashboardContent() {
             if (text) {
               const record = JSON.parse(text);
               if (record?.graph && record.map_name === selectedMapName) {
-                setGraphData(record.graph);
+                setGraphData({
+                  nodes: record.graph.nodes ?? [],
+                  edges: record.graph.edges ?? [],
+                  docking_areas: record.graph.docking_areas ?? [],
+                });
                 setActiveGraphName(record.graph_name ?? null);
                 return;
               }
@@ -270,7 +294,12 @@ function DashboardContent() {
         const fullRes = await fetch(`${BACKEND_URL}/graphs/${graphList[0]._id}`);
         if (fullRes.ok) {
           const full = await fullRes.json();
-          setGraphData(full.graph ?? { nodes: [], edges: [] });
+          const g = full.graph ?? { nodes: [], edges: [] };
+          setGraphData({
+            nodes: g.nodes ?? [],
+            edges: g.edges ?? [],
+            docking_areas: g.docking_areas ?? [],
+          });
           setActiveGraphName(full.graph_name ?? graphList[0].graph_name ?? null);
         } else {
           setGraphData({ nodes: [], edges: [] });
