@@ -62,13 +62,14 @@ interface RestrictedArea {
   polygonPoints?: number[]; // ROS koordinatları [x1, y1, x2, y2, ...]
   color: string;
   type: 'restricted' | 'docking-pallet' | 'polygon';
+  zoneType?: 'restricted' | 'docking-pallet';
   isSelected?: boolean;
-  robotName?: string; // Hangi robota ait olduğu
+  mapName?: string;
 }
 
 interface ProhibitedZone {
   _id: string;
-  robot_name: string;
+  map_name: string;
   zone_name: string;
   zone_type: string;
   polygon_points: number[];
@@ -280,32 +281,34 @@ const RobotMap: React.FC<RobotMapProps> = ({
     fetchMap();
   }, [mapName, robotName]);
 
-  // Prohibited zones'ları yükle ve restrictedAreas'a ekle
+  // Load prohibited zones for the current map
   useEffect(() => {
+    const activeMapName = mapName ?? mapData?.map_name;
+    if (!activeMapName) return;
+
     const loadProhibitedZones = async () => {
       try {
-        const response = await fetch(`${BACKEND_URL}/zones`);
+        const response = await fetch(
+          `${BACKEND_URL}/zones/map/${encodeURIComponent(activeMapName)}`
+        );
         if (response.ok) {
           const zones: ProhibitedZone[] = await response.json();
-          console.log('Prohibited zones loaded:', zones);
-          
-          // Prohibited zones'ları RestrictedArea formatına çevir
-          const robotIds = new Set(robots.map((r) => r.id));
-          const convertedZones: RestrictedArea[] = zones
-            .filter((zone) => robotIds.size === 0 || robotIds.has(zone.robot_name))
-            .map(zone => ({
-            id: zone._id,
-            name: zone.zone_name,
-            polygonPoints: zone.polygon_points,
-            color: '#ef4444', // Kırmızı renk
-            type: 'polygon',
-            robotName: zone.robot_name,
-            isSelected: false
-          }));
-          
-          if (onRestrictedAreasChange) {
-            onRestrictedAreasChange(convertedZones);
-          }
+          const convertedZones: RestrictedArea[] = zones.map((zone) => {
+            const zoneType =
+              zone.zone_type === 'docking-pallet' ? 'docking-pallet' : 'restricted';
+            return {
+              id: zone._id,
+              name: zone.zone_name,
+              polygonPoints: zone.polygon_points,
+              color: zoneType === 'docking-pallet' ? '#3b82f6' : '#ef4444',
+              type: 'polygon' as const,
+              zoneType,
+              mapName: zone.map_name,
+              isSelected: false,
+            };
+          });
+
+          onRestrictedAreasChange?.(convertedZones);
         }
       } catch (error) {
         console.error('Error loading prohibited zones:', error);
@@ -313,7 +316,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
     };
 
     loadProhibitedZones();
-  }, [robots.map((r) => r.id).join(',')]);
+  }, [mapName, mapData?.map_name]);
 
   const convertToPixel = (position: { x: number; y: number }) => {
     if (mapData) {
@@ -524,35 +527,39 @@ const RobotMap: React.FC<RobotMapProps> = ({
     setSelectedRobotId(null);
   };
 
-  const saveAreaToDatabase = async (area: RestrictedArea, robotName: string = 'agv001') => {
-    // Polygon tipindeki alanları veritabanına kaydet
-    if (area.type === 'polygon' && area.polygonPoints && area.polygonPoints.length > 0) {
-      try {
-        const response = await fetch(`${BACKEND_URL}/zones`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            robot_name: robotName,
-            zone_name: area.name,
-            zone_type: 'polygon',
-            polygon_points: area.polygonPoints,
-            timestamp: Date.now()
-          }),
-        });
+  const saveAreaToDatabase = async (area: RestrictedArea): Promise<ProhibitedZone | null> => {
+    if (area.type !== 'polygon' || !area.polygonPoints?.length) return null;
 
-        if (response.ok) {
-          const savedZone = await response.json();
-          console.log('Zone saved to database:', savedZone);
-          return savedZone;
-        } else {
-          console.error('Failed to save zone to database');
-        }
-      } catch (error) {
-        console.error('Error saving zone to database:', error);
-      }
+    const targetMapName = area.mapName ?? mapName ?? mapData?.map_name;
+    if (!targetMapName) {
+      console.error('Cannot save zone: no map name');
+      return null;
     }
+    const zoneType = area.zoneType ?? 'restricted';
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/zones`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          map_name: targetMapName,
+          zone_name: area.name,
+          zone_type: zoneType,
+          polygon_points: area.polygonPoints,
+          timestamp: Date.now(),
+        }),
+      });
+
+      if (response.ok) {
+        const savedZone: ProhibitedZone = await response.json();
+        console.log('Zone saved to database:', savedZone);
+        return savedZone;
+      }
+      console.error('Failed to save zone to database');
+    } catch (error) {
+      console.error('Error saving zone to database:', error);
+    }
+    return null;
   };
 
   const deleteAreaFromDatabase = async (areaId: string) => {
@@ -752,7 +759,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
                     rosCoordinates.push(parseFloat(rosX.toFixed(2)), parseFloat(rosYCoord.toFixed(2)));
                   });
                   
-                  const newArea: RestrictedArea = {
+                  const draftArea: RestrictedArea = {
                     id: `area-${Date.now()}`,
                     name: `${polygonMode.type === 'restricted' ? 'Restricted' : 'Docking'} Area ${restrictedAreas.length + 1}`,
                     startPoint: polygonMode.startPoint,
@@ -760,11 +767,17 @@ const RobotMap: React.FC<RobotMapProps> = ({
                     polygonPoints: rosCoordinates,
                     color: polygonMode.type === 'restricted' ? '#ef4444' : '#3b82f6',
                     type: 'polygon',
-                    robotName: robotName || 'agv001'
+                    zoneType: polygonMode.type,
+                    mapName: mapName ?? mapData?.map_name,
                   };
-                  
-                  saveAreaToDatabase(newArea);
-                  onRestrictedAreasChange?.([...restrictedAreas, newArea]);
+
+                  void (async () => {
+                    const savedZone = await saveAreaToDatabase(draftArea);
+                    const newArea: RestrictedArea = savedZone
+                      ? { ...draftArea, id: savedZone._id, mapName: savedZone.map_name }
+                      : draftArea;
+                    onRestrictedAreasChange?.([...restrictedAreas, newArea]);
+                  })();
                   stopPolygonCreation();
                 }
                 return;

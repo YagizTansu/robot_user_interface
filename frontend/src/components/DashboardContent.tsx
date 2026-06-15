@@ -217,6 +217,7 @@ function DashboardContent() {
     };
 
     loadMapRobots();
+    setRestrictedAreas([]);
   }, [selectedMapName]);
 
   // Keep selected robot id in sync with map filter

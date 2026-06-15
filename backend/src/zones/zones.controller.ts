@@ -40,6 +40,34 @@ export class ZonesController {
     }
   }
 
+  @Get('map/:mapName')
+  async findByMapName(@Param('mapName') mapName: string) {
+    try {
+      return await this.zonesService.findByMapName(mapName);
+    } catch (error) {
+      throw new HttpException(
+        'Failed to fetch zones for map',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /** Returns zones for the map the robot is assigned to (robots_info). */
+  @Get('robot/:robotName')
+  async findByRobotName(@Param('robotName') robotName: string) {
+    try {
+      return await this.zonesService.findByRobotName(robotName);
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        'Failed to fetch zones for robot',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Get(':id')
   async findById(@Param('id') id: string) {
     try {
@@ -54,18 +82,6 @@ export class ZonesController {
       }
       throw new HttpException(
         'Failed to fetch zone',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Get('robot/:robotName')
-  async findByRobotName(@Param('robotName') robotName: string) {
-    try {
-      return await this.zonesService.findByRobotName(robotName);
-    } catch (error) {
-      throw new HttpException(
-        'Failed to fetch zones for robot',
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
@@ -93,6 +109,22 @@ export class ZonesController {
     }
   }
 
+  @Delete('map/:mapName')
+  async deleteByMapName(@Param('mapName') mapName: string) {
+    try {
+      const result = await this.zonesService.deleteByMapName(mapName);
+      return {
+        message: `Deleted ${result.deletedCount} zones for map ${mapName}`,
+        deletedCount: result.deletedCount,
+      };
+    } catch (error) {
+      throw new HttpException(
+        'Failed to delete zones',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Delete(':id')
   async delete(@Param('id') id: string) {
     try {
@@ -110,22 +142,6 @@ export class ZonesController {
       }
       throw new HttpException(
         'Failed to delete zone',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Delete('robot/:robotName')
-  async deleteByRobotName(@Param('robotName') robotName: string) {
-    try {
-      const result = await this.zonesService.deleteByRobotName(robotName);
-      return {
-        message: `Deleted ${result.deletedCount} zones for robot ${robotName}`,
-        deletedCount: result.deletedCount,
-      };
-    } catch (error) {
-      throw new HttpException(
-        'Failed to delete zones',
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

@@ -6,7 +6,7 @@ export type ProhibitedZoneDocument = ProhibitedZone & Document;
 @Schema({ collection: 'prohibited_zones' })
 export class ProhibitedZone {
   @Prop({ required: true })
-  robot_name: string;
+  map_name: string;
 
   @Prop({ required: true })
   zone_name: string;
