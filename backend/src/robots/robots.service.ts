@@ -16,22 +16,12 @@ export class RobotsService {
     return {
       id: robotPose.robot_name,
       name: robotPose.robot_name,
-      status: 'Active',
-      battery: 85,
       position: {
         x: robotPose.x,
         y: robotPose.y,
       },
       orientation: yawDegrees,
-      currentTask: 'Navigation',
-      speed: 1.0,
-      temperature: 25,
       lastSeen: normalizeToEpochMs(robotPose.timestamp),
-      capabilities: {
-        maxSpeed: 2.5,
-        maxPayload: 500,
-        sensors: ['LiDAR', 'Camera', 'IMU'],
-      },
     };
   }
 

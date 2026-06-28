@@ -123,12 +123,14 @@ const Sidebar = ({
     <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''} ${mobileMenuOpen ? 'mobile-open' : ''}`}>
       <div className="sidebar-header">
         <div className="logo">
-          <div className="logo-icon">
-            <img 
-              src="/logo/logo.jpg" 
-              alt="ADVOARD Logo" 
-              className="logo-image"
-            />
+          <div className="logo-icon" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="4" y="4" width="16" height="10" rx="2"/>
+              <circle cx="8" cy="9" r="1.5" fill="currentColor" stroke="none"/>
+              <circle cx="16" cy="9" r="1.5" fill="currentColor" stroke="none"/>
+              <path d="M9 16l1-1 1 1"/>
+              <path d="M15 16l1-1 1 1"/>
+            </svg>
           </div>
           {!sidebarCollapsed && <span className="logo-text">ADVOARD</span>}
         </div>

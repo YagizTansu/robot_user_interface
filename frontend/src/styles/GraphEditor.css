@@ -5,6 +5,49 @@
   overflow: hidden;
 }
 
+.graph-editor-banner {
+  margin: 0 20px 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.graph-editor-banner--loading {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+}
+
+.graph-editor-banner--error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+}
+
+.graph-editor-banner--map {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 55;
+  margin: 0;
+  max-width: calc(100% - 48px);
+}
+
+.graph-editor-map-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.72);
+  z-index: 45;
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
 /* ── Left panel ── */
 .graph-editor-panel {
   width: 280px;

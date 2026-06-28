@@ -3,70 +3,19 @@ import '../styles/RobotsContent.css';
 import robotWebSocketService from '../services/robotWebSocketService';
 import { BACKEND_URL } from '../config';
 import { isRobotOnline } from '../utils/robotTime';
+import type {
+  LiveRobot,
+  RegisteredRobot,
+  MapSummary,
+  GraphListItem,
+  RobotCommand,
+} from '../types';
+import { COMMAND_STATUS_LABEL, ACTIVE_COMMAND_STATUSES } from '../types';
 
 const MAP_STORAGE_KEY = 'dashboard_selected_map';
 const ROBOT_STORAGE_KEY = 'dashboard_selected_robot';
 
-type CommandStatus =
-  | 'pending'
-  | 'accepted'
-  | 'in_progress'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
-
-const ACTIVE_STATUSES: CommandStatus[] = ['pending', 'accepted', 'in_progress'];
-
-const COMMAND_LABEL: Record<CommandStatus, string> = {
-  pending: 'Pending',
-  accepted: 'Accepted',
-  in_progress: 'In Progress',
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-};
-
-interface LiveRobot {
-  id: string;
-  name: string;
-  status: string;
-  battery: number;
-  position: { x: number; y: number };
-  orientation: number;
-  currentTask: string;
-  speed: number;
-  temperature: number;
-  lastSeen?: number;
-}
-
-interface RegisteredRobot {
-  robot_name: string;
-  map_name: string;
-  active_graph_name?: string;
-}
-
-interface MapSummary {
-  map_name: string;
-}
-
-interface GraphSummary {
-  _id: string;
-  graph_name?: string;
-}
-
-interface RobotCommand {
-  _id: string;
-  robot_name: string;
-  command_type: string;
-  node_id: string;
-  node_description?: string;
-  graph_name?: string;
-  goal: { x: number; y: number; z: number; yaw: number };
-  status: CommandStatus;
-  error_message?: string;
-  created_at: number;
-  updated_at: number;
-}
+const ACTIVE_STATUSES = ACTIVE_COMMAND_STATUSES;
 
 interface FleetRow {
   robot_name: string;
@@ -115,7 +64,7 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
   const [latestCommands, setLatestCommands] = useState<Record<string, RobotCommand | null>>({});
   const [activeCommand, setActiveCommand] = useState<RobotCommand | null>(null);
   const [commandHistory, setCommandHistory] = useState<RobotCommand[]>([]);
-  const [graphOptions, setGraphOptions] = useState<GraphSummary[]>([]);
+  const [graphOptions, setGraphOptions] = useState<GraphListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -397,7 +346,7 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
                     <td>
                       {row.latestCommand && ACTIVE_STATUSES.includes(row.latestCommand.status) ? (
                         <span className={`robots-cmd-pill robots-cmd-pill--${row.latestCommand.status.replace('_', '-')}`}>
-                          {COMMAND_LABEL[row.latestCommand.status]}
+                          {COMMAND_STATUS_LABEL[row.latestCommand.status]}
                         </span>
                       ) : (
                         <span className="robots-cmd-pill robots-cmd-pill--idle">Idle</span>
@@ -473,8 +422,6 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
                   <dd>
                     {selectedRow.live ? `${selectedRow.live.orientation.toFixed(1)}°` : '—'}
                   </dd>
-                  <dt>Battery</dt>
-                  <dd>{selectedRow.live ? `${selectedRow.live.battery}%` : '—'}</dd>
                 </dl>
               </section>
 
@@ -483,7 +430,7 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
                 {activeCommand ? (
                   <div className="robots-command-card">
                     <span className={`robots-cmd-pill robots-cmd-pill--${activeCommand.status.replace('_', '-')}`}>
-                      {COMMAND_LABEL[activeCommand.status]}
+                      {COMMAND_STATUS_LABEL[activeCommand.status]}
                     </span>
                     <p className="robots-command-target">
                       → {activeCommand.node_description || activeCommand.node_id}
@@ -516,7 +463,7 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
                     {commandHistory.slice(0, 8).map((cmd) => (
                       <li key={cmd._id}>
                         <span className={`robots-cmd-pill robots-cmd-pill--${cmd.status.replace('_', '-')}`}>
-                          {COMMAND_LABEL[cmd.status]}
+                          {COMMAND_STATUS_LABEL[cmd.status]}
                         </span>
                         <span>{cmd.node_description || cmd.node_id}</span>
                         <time>{new Date(cmd.created_at).toLocaleTimeString()}</time>

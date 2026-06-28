@@ -1,27 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import '../styles/RobotMap.css';
 import { BACKEND_URL } from '../config';
-
-interface Robot {
-  id: string;
-  name: string;
-  position: { x: number; y: number };
-  orientation: number;
-  status: string;
-  battery: number;
-  currentTask?: string;
-  speed?: number;
-  temperature?: number;
-}
-
-interface MapData {
-  map_name: string;
-  image_png_base64: string;
-  width_px: number;
-  height_px: number;
-  resolution: number;
-  origin: number[]; // [x, y, theta]
-}
+import type { Robot, GraphNode, DockingArea, GraphData, MapData } from '../types';
 
 interface RobotMapProps {
   robotName?: string;
@@ -81,34 +61,9 @@ interface ProhibitedZone {
   timestamp: number;
 }
 
-interface GraphNode {
-  id: string;
+interface Point {
   x: number;
   y: number;
-  z: number;
-  yaw?: number;
-  type: string;
-  description: string;
-}
-
-interface GraphEdge {
-  from: string;
-  to: string;
-  cost: number;
-  bidirectional: boolean;
-  max_speed: number;
-}
-
-interface DockingArea {
-  id: string;
-  name: string;
-  x?: number;
-  y?: number;
-  yaw?: number;
-  width?: number;
-  height?: number;
-  polygon_points: number[];
-  assigned_node_id?: string;
 }
 
 interface DockPoseEdit {
@@ -117,12 +72,6 @@ interface DockPoseEdit {
   width: number;
   height: number;
   yaw: number;
-}
-
-interface GraphData {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  docking_areas?: DockingArea[];
 }
 
 interface PolygonCreationMode {
@@ -545,7 +494,6 @@ const RobotMap: React.FC<RobotMapProps> = ({
         if (response.ok) {
           const data: MapData = await response.json();
           setMapData(data);
-          console.log(`Map loaded: ${data.map_name} (${data.width_px}x${data.height_px})`);
         } else {
           console.error(`Failed to load map: ${mapName ?? robotName}`);
         }
@@ -907,7 +855,6 @@ const RobotMap: React.FC<RobotMapProps> = ({
 
       if (response.ok) {
         const savedZone: ProhibitedZone = await response.json();
-        console.log('Zone saved to database:', savedZone);
         return savedZone;
       }
       console.error('Failed to save zone to database');
@@ -958,7 +905,6 @@ const RobotMap: React.FC<RobotMapProps> = ({
       });
 
       if (response.ok) {
-        console.log('Zone deleted from database:', areaId);
         return true;
       } else {
         console.error('Failed to delete zone from database');
@@ -2343,45 +2289,49 @@ const RobotMap: React.FC<RobotMapProps> = ({
             </div>
 
             <div style={{ display: 'grid', gap: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#6b7280', fontSize: '14px' }}>Status:</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div 
-                    style={{ 
-                      width: '8px', 
-                      height: '8px', 
-                      borderRadius: '50%', 
-                      background: getStatusColor(selectedRobot.status) 
-                    }} 
-                  />
-                  <span style={{ fontSize: '14px', fontWeight: '500', color: '#1a1a1a' }}>
-                    {selectedRobot.status}
-                  </span>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#6b7280', fontSize: '14px' }}>Battery:</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div style={{
-                    width: '40px',
-                    height: '6px',
-                    background: '#e5e7eb',
-                    borderRadius: '3px',
-                    overflow: 'hidden'
-                  }}>
-                    <div style={{
-                      width: `${selectedRobot.battery}%`,
-                      height: '100%',
-                      background: selectedRobot.battery > 20 ? '#10b981' : '#ef4444',
-                      borderRadius: '3px'
-                    }} />
+              {selectedRobot.status && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: '#6b7280', fontSize: '14px' }}>Status:</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div
+                      style={{
+                        width: '8px',
+                        height: '8px',
+                        borderRadius: '50%',
+                        background: getStatusColor(selectedRobot.status),
+                      }}
+                    />
+                    <span style={{ fontSize: '14px', fontWeight: '500', color: '#1a1a1a' }}>
+                      {selectedRobot.status}
+                    </span>
                   </div>
-                  <span style={{ fontSize: '14px', fontWeight: '500', color: '#1a1a1a' }}>
-                    {selectedRobot.battery}%
-                  </span>
                 </div>
-              </div>
+              )}
+
+              {selectedRobot.battery !== undefined && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: '#6b7280', fontSize: '14px' }}>Battery:</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{
+                      width: '40px',
+                      height: '6px',
+                      background: '#e5e7eb',
+                      borderRadius: '3px',
+                      overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        width: `${selectedRobot.battery}%`,
+                        height: '100%',
+                        background: selectedRobot.battery > 20 ? '#10b981' : '#ef4444',
+                        borderRadius: '3px',
+                      }} />
+                    </div>
+                    <span style={{ fontSize: '14px', fontWeight: '500', color: '#1a1a1a' }}>
+                      {selectedRobot.battery}%
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {selectedRobot.currentTask && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

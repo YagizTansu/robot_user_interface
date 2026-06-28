@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { GraphRecord, GraphDocument } from './schemas/graph.schema';
@@ -57,10 +57,20 @@ export class GraphsService {
 
   async activate(id: string, robotName: string): Promise<{ active_graph_name: string }> {
     const graph = await this.findById(id);
+    const robotInfo = await this.robotInfoModel
+      .findOne({ robot_name: robotName })
+      .exec();
+    if (!robotInfo) {
+      throw new NotFoundException(`Robot not found: ${robotName}`);
+    }
+    if (robotInfo.map_name && graph.map_name !== robotInfo.map_name) {
+      throw new BadRequestException(
+        `Graph "${graph.graph_name}" belongs to map "${graph.map_name}", not "${robotInfo.map_name}"`,
+      );
+    }
     await this.robotInfoModel.updateOne(
       { robot_name: robotName },
       { $set: { active_graph_name: graph.graph_name } },
-      { upsert: true },
     );
     return { active_graph_name: graph.graph_name };
   }
@@ -69,11 +79,15 @@ export class GraphsService {
     const robotInfo = await this.robotInfoModel
       .findOne({ robot_name: robotName })
       .exec();
-    if (!robotInfo || !('active_graph_name' in robotInfo) || !(robotInfo as any).active_graph_name) {
+    if (!robotInfo?.active_graph_name) {
       return null;
     }
-    return this.graphModel
-      .findOne({ graph_name: (robotInfo as any).active_graph_name })
-      .exec();
+    const query: { graph_name: string; map_name?: string } = {
+      graph_name: robotInfo.active_graph_name,
+    };
+    if (robotInfo.map_name) {
+      query.map_name = robotInfo.map_name;
+    }
+    return this.graphModel.findOne(query).exec();
   }
 }

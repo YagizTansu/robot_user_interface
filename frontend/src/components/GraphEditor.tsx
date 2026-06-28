@@ -1,62 +1,17 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import '../styles/GraphEditor.css';
 import RobotMap from './RobotMap';
-import { BACKEND_URL } from '../config';
-
-interface GraphNode {
-  id: string;
-  x: number;
-  y: number;
-  z: number;
-  yaw?: number;
-  type: string;
-  description: string;
-}
-
-interface GraphEdge {
-  from: string;
-  to: string;
-  cost: number;
-  bidirectional: boolean;
-  max_speed: number;
-}
-
-interface DockingArea {
-  id: string;
-  name: string;
-  x?: number;
-  y?: number;
-  yaw?: number;
-  width?: number;
-  height?: number;
-  polygon_points: number[];
-  assigned_node_id?: string;
-}
-
-interface GraphData {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  docking_areas?: DockingArea[];
-}
-
-interface GraphMeta {
-  _id: string;
-  graph_name: string;
-  map_name: string;
-  timestamp: number;
-}
+import { apiFetch, apiFetchNullable, ApiError } from '../api';
+import type {
+  GraphData,
+  GraphMeta,
+  GraphRecord,
+  MapSummary,
+  MapRobotInfo,
+} from '../types';
 
 const GRAPH_EDITOR_MAP_KEY = 'graph_editor_selected_map';
 const GRAPH_EDITOR_ROBOT_KEY = 'graph_editor_selected_robot';
-
-interface MapSummary {
-  map_name: string;
-}
-
-interface MapRobotInfo {
-  robot_name: string;
-  active_graph_name?: string;
-}
 
 function GraphEditor() {
   const [maps, setMaps] = useState<MapSummary[]>([]);
@@ -77,6 +32,10 @@ function GraphEditor() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [savedSnapshot, setSavedSnapshot] = useState<{ name: string; data: GraphData } | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  const [initLoading, setInitLoading] = useState(true);
+  const [initError, setInitError] = useState<string | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [graphLoadError, setGraphLoadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isDirty = useMemo(() => {
@@ -99,10 +58,10 @@ function GraphEditor() {
 
   useEffect(() => {
     const init = async () => {
+      setInitLoading(true);
+      setInitError(null);
       try {
-        const mapsRes = await fetch(`${BACKEND_URL}/maps`);
-        if (!mapsRes.ok) return;
-        const mapList: MapSummary[] = await mapsRes.json();
+        const mapList = await apiFetch<MapSummary[]>('/maps');
         setMaps(mapList);
         if (mapList.length === 0) return;
 
@@ -114,10 +73,12 @@ function GraphEditor() {
         const storedRobot = localStorage.getItem(GRAPH_EDITOR_ROBOT_KEY);
         if (storedRobot) setSelectedRobotName(storedRobot);
       } catch (e) {
-        console.error('Init error:', e);
+        setInitError(e instanceof ApiError ? e.message : 'Failed to load maps');
+      } finally {
+        setInitLoading(false);
       }
     };
-    init();
+    void init();
   }, []);
 
   useEffect(() => {
@@ -129,20 +90,14 @@ function GraphEditor() {
 
     const loadMapRobots = async () => {
       try {
-        const res = await fetch(
-          `${BACKEND_URL}/maps/${encodeURIComponent(mapName)}/robots`
+        const robots = await apiFetch<MapRobotInfo[]>(
+          `/maps/${encodeURIComponent(mapName)}/robots`,
         );
-        if (res.ok) {
-          const robots: MapRobotInfo[] = await res.json();
-          setMapRobots(robots);
-          setSelectedRobotName((prev) => {
-            if (prev && robots.some((r) => r.robot_name === prev)) return prev;
-            return robots[0]?.robot_name ?? null;
-          });
-        } else {
-          setMapRobots([]);
-          setSelectedRobotName(null);
-        }
+        setMapRobots(robots);
+        setSelectedRobotName((prev) => {
+          if (prev && robots.some((r) => r.robot_name === prev)) return prev;
+          return robots[0]?.robot_name ?? null;
+        });
       } catch {
         setMapRobots([]);
         setSelectedRobotName(null);
@@ -169,18 +124,10 @@ function GraphEditor() {
     }
     const loadActive = async () => {
       try {
-        const activeRes = await fetch(`${BACKEND_URL}/graphs/active/${selectedRobotName}`);
-        if (activeRes.ok) {
-          const text = await activeRes.text();
-          if (text) {
-            const activeGraph = JSON.parse(text);
-            if (activeGraph?.graph_name) {
-              setActiveGraphName(activeGraph.graph_name);
-              return;
-            }
-          }
-        }
-        setActiveGraphName(null);
+        const activeGraph = await apiFetchNullable<GraphRecord>(
+          `/graphs/active/${encodeURIComponent(selectedRobotName)}`,
+        );
+        setActiveGraphName(activeGraph?.graph_name ?? null);
       } catch {
         setActiveGraphName(null);
       }
@@ -196,8 +143,10 @@ function GraphEditor() {
   const fetchGraphList = async () => {
     if (!mapName) return;
     try {
-      const res = await fetch(`${BACKEND_URL}/graphs?map_name=${encodeURIComponent(mapName)}`);
-      if (res.ok) setGraphList(await res.json());
+      const list = await apiFetch<GraphMeta[]>(
+        `/graphs?map_name=${encodeURIComponent(mapName)}`,
+      );
+      setGraphList(list);
     } catch (e) {
       console.error('Failed to fetch graph list:', e);
     }
@@ -209,29 +158,39 @@ function GraphEditor() {
       setEditingGraphName('');
       setSavedSnapshot(null);
       setLastSavedAt(null);
+      setGraphLoadError(null);
       return;
     }
+
+    let cancelled = false;
     const load = async () => {
+      setGraphLoading(true);
+      setGraphLoadError(null);
       try {
-        const res = await fetch(`${BACKEND_URL}/graphs/${selectedGraphId}`);
-        if (res.ok) {
-          const record = await res.json();
-          const g = record.graph ?? { nodes: [], edges: [] };
-          const normalized: GraphData = {
-            nodes: g.nodes ?? [],
-            edges: g.edges ?? [],
-            docking_areas: g.docking_areas ?? [],
-          };
-          setGraphData(normalized);
-          setEditingGraphName(record.graph_name);
-          setSavedSnapshot({ name: record.graph_name, data: normalized });
-          setLastSavedAt(record.timestamp ?? Date.now());
-        }
+        const record = await apiFetch<GraphRecord>(`/graphs/${selectedGraphId}`);
+        if (cancelled) return;
+        const g = record.graph ?? { nodes: [], edges: [] };
+        const normalized: GraphData = {
+          nodes: g.nodes ?? [],
+          edges: g.edges ?? [],
+          docking_areas: g.docking_areas ?? [],
+        };
+        setGraphData(normalized);
+        setEditingGraphName(record.graph_name);
+        setSavedSnapshot({ name: record.graph_name, data: normalized });
+        setLastSavedAt(record.timestamp ?? Date.now());
       } catch (e) {
-        console.error('Failed to load graph:', e);
+        if (!cancelled) {
+          setGraphLoadError(e instanceof ApiError ? e.message : 'Failed to load graph');
+        }
+      } finally {
+        if (!cancelled) setGraphLoading(false);
       }
     };
-    load();
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, [selectedGraphId]);
 
   useEffect(() => {
@@ -263,20 +222,21 @@ function GraphEditor() {
 
   const handleSave = async (): Promise<boolean> => {
     if (!selectedGraphId || !graphData) return false;
-    const res = await fetch(`${BACKEND_URL}/graphs/${selectedGraphId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ graph_name: editingGraphName, graph: graphData }),
-    });
-    if (res.ok) {
+    try {
+      await apiFetch(`/graphs/${selectedGraphId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ graph_name: editingGraphName, graph: graphData }),
+      });
       setSavedSnapshot({ name: editingGraphName, data: graphData });
       setLastSavedAt(Date.now());
       showStatus('Saved');
       await fetchGraphList();
       return true;
+    } catch (e) {
+      showStatus(e instanceof ApiError ? e.message : 'Save failed');
+      return false;
     }
-    showStatus('Save failed');
-    return false;
   };
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -296,18 +256,17 @@ function GraphEditor() {
           docking_areas: inner.docking_areas ?? [],
         };
         const graphName = file.name.replace(/\.json$/i, '');
-        const res = await fetch(`${BACKEND_URL}/graphs`, {
+        const saved = await apiFetch<GraphMeta>('/graphs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ graph_name: graphName, map_name: mapName, graph: normalized }),
         });
-        if (res.ok) {
-          const saved = await res.json();
-          showStatus(`Uploaded "${graphName}"`);
-          await fetchGraphList();
-          setSelectedGraphId(saved._id);
-        } else showStatus('Upload failed');
-      } catch { showStatus('Could not parse JSON'); }
+        showStatus(`Uploaded "${graphName}"`);
+        await fetchGraphList();
+        setSelectedGraphId(saved._id);
+      } catch (e) {
+        showStatus(e instanceof ApiError ? e.message : 'Could not parse or upload JSON');
+      }
     };
     reader.readAsText(file);
     e.target.value = '';
@@ -332,49 +291,60 @@ function GraphEditor() {
       const saved = await handleSave();
       if (!saved) return;
     }
-    const res = await fetch(
-      `${BACKEND_URL}/graphs/${selectedGraphId}/activate/${encodeURIComponent(selectedRobotName)}`,
-      { method: 'PUT' }
-    );
-    if (res.ok) {
+    try {
+      await apiFetch(
+        `/graphs/${selectedGraphId}/activate/${encodeURIComponent(selectedRobotName)}`,
+        { method: 'PUT' },
+      );
       setActiveGraphName(editingGraphName);
       showStatus(`"${editingGraphName}" activated on ${selectedRobotName}`);
-    } else showStatus('Activation failed');
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        showStatus('Robot not found yet. It must connect and register on a map first.');
+      } else {
+        showStatus(e instanceof ApiError ? e.message : 'Activation failed');
+      }
+    }
   };
 
   const handleDelete = async () => {
     if (!selectedGraphId) return;
-    await fetch(`${BACKEND_URL}/graphs/${selectedGraphId}`, { method: 'DELETE' });
-    setSelectedGraphId(null);
-    setGraphData(null);
-    setSavedSnapshot(null);
-    setLastSavedAt(null);
-    setShowDeleteModal(false);
-    showStatus('Deleted');
-    await fetchGraphList();
+    try {
+      await apiFetch(`/graphs/${selectedGraphId}`, { method: 'DELETE' });
+      setSelectedGraphId(null);
+      setGraphData(null);
+      setSavedSnapshot(null);
+      setLastSavedAt(null);
+      setShowDeleteModal(false);
+      showStatus('Deleted');
+      await fetchGraphList();
+    } catch (e) {
+      showStatus(e instanceof ApiError ? e.message : 'Delete failed');
+    }
   };
 
   const handleNewGraph = async () => {
     if (!mapName) { showStatus('Select a map first'); return; }
     const name = newGraphName.trim();
     if (!name) return;
-    const res = await fetch(`${BACKEND_URL}/graphs`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        graph_name: name,
-        map_name: mapName,
-        graph: { nodes: [], edges: [], docking_areas: [] },
-      }),
-    });
-    if (res.ok) {
-      const saved = await res.json();
+    try {
+      const saved = await apiFetch<GraphMeta>('/graphs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          graph_name: name,
+          map_name: mapName,
+          graph: { nodes: [], edges: [], docking_areas: [] },
+        }),
+      });
       showStatus(`Created "${name}"`);
       await fetchGraphList();
       setSelectedGraphId(saved._id);
       setShowNewGraphModal(false);
       setNewGraphName('');
-    } else showStatus('Create failed');
+    } catch (e) {
+      showStatus(e instanceof ApiError ? e.message : 'Create failed');
+    }
   };
 
   const openNewGraphModal = () => {
@@ -431,6 +401,13 @@ function GraphEditor() {
           <h2>Graph Editor</h2>
           <p className="panel-header-sub">Manage navigation graphs</p>
         </div>
+
+        {initLoading && (
+          <div className="graph-editor-banner graph-editor-banner--loading">Loading maps…</div>
+        )}
+        {initError && (
+          <div className="graph-editor-banner graph-editor-banner--error">{initError}</div>
+        )}
 
         <div className="panel-section">
           <label className="panel-section-label">Map</label>
@@ -570,6 +547,18 @@ function GraphEditor() {
       {/* Map + floating tools */}
       <div className="graph-editor-map">
         {statusMsg && <div className="graph-toast">{statusMsg}</div>}
+
+        {graphLoadError && (
+          <div className="graph-editor-banner graph-editor-banner--error graph-editor-banner--map">
+            {graphLoadError}
+          </div>
+        )}
+
+        {graphLoading && (
+          <div className="graph-editor-map-overlay">
+            <span>Loading graph…</span>
+          </div>
+        )}
 
         {(isAddingNode || isEdgeMode) && (
           <div className="mode-hint-bar">

@@ -26,15 +26,15 @@ export const RobotPoseSchema = SchemaFactory.createForClass(RobotPose);
 export interface Robot {
   id: string;
   name: string;
-  status: string;
-  battery: number;
   position: { x: number; y: number };
   orientation: number;
-  currentTask: string;
-  speed: number;
-  temperature: number;
   lastSeen?: number;
-  capabilities: {
+  status?: string;
+  battery?: number;
+  currentTask?: string;
+  speed?: number;
+  temperature?: number;
+  capabilities?: {
     maxSpeed: number;
     maxPayload: number;
     sensors: string[];

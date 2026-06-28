@@ -1,38 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import '../styles/MapsContent.css';
 import { BACKEND_URL } from '../config';
+import type { MapSummary, MapDetail, RegisteredRobot, GraphMeta } from '../types';
 
 const GRAPH_EDITOR_MAP_KEY = 'graph_editor_selected_map';
-
-interface MapSummary {
-  map_name: string;
-  width_px: number;
-  height_px: number;
-  resolution: number;
-}
-
-interface MapDetail extends MapSummary {
-  image_png_base64: string;
-  origin: number[];
-  negate?: number;
-  occupied_thresh?: number;
-  free_thresh?: number;
-  mode?: string;
-  timestamp?: number;
-}
-
-interface MapRobot {
-  robot_name: string;
-  map_name: string;
-  active_graph_name?: string;
-}
-
-interface GraphMeta {
-  _id: string;
-  graph_name: string;
-  map_name: string;
-  timestamp: number;
-}
 
 interface MapsContentProps {
   onOpenDashboard?: (mapName: string) => void;
@@ -49,7 +20,7 @@ function MapsContent({ onOpenDashboard, onOpenGraphEditor }: MapsContentProps) {
   const [graphCounts, setGraphCounts] = useState<Record<string, number>>({});
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [detail, setDetail] = useState<MapDetail | null>(null);
-  const [robots, setRobots] = useState<MapRobot[]>([]);
+  const [robots, setRobots] = useState<RegisteredRobot[]>([]);
   const [graphs, setGraphs] = useState<GraphMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -88,7 +59,7 @@ function MapsContent({ onOpenDashboard, onOpenGraphEditor }: MapsContentProps) {
     }
 
     if (robotsRes.ok) {
-      const registered: MapRobot[] = await robotsRes.json();
+      const registered: RegisteredRobot[] = await robotsRes.json();
       const counts: Record<string, number> = {};
       registered.forEach((r) => {
         counts[r.map_name] = (counts[r.map_name] ?? 0) + 1;

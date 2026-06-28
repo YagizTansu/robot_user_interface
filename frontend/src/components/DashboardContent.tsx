@@ -4,24 +4,12 @@ import RobotMap from './RobotMap';
 import robotWebSocketService from '../services/robotWebSocketService';
 import { BACKEND_URL } from '../config';
 import { isRobotOnline } from '../utils/robotTime';
-
-interface Robot {
-  id: string;
-  name: string;
-  status: string;
-  battery: number;
-  position: { x: number; y: number };
-  orientation: number;
-  currentTask: string;
-  speed: number;
-  temperature: number;
-  lastSeen?: number;
-  capabilities: {
-    maxSpeed: number;
-    maxPayload: number;
-    sensors: string[];
-  };
-}
+import type { Robot, GraphData, GraphNode, RobotCommand, CommandStatus } from '../types';
+import {
+  COMMAND_STATUS_LABEL,
+  ACTIVE_COMMAND_STATUS_SET,
+} from '../types';
+import type { MapSummary, MapRobotInfo, GraphListItem } from '../types';
 
 interface Point {
   x: number;
@@ -38,113 +26,16 @@ interface RestrictedArea {
   isSelected?: boolean;
 }
 
-interface GraphNode {
-  id: string;
-  x: number;
-  y: number;
-  z: number;
-  yaw?: number;
-  type: string;
-  description: string;
-}
-
-interface GraphEdge {
-  from: string;
-  to: string;
-  cost: number;
-  bidirectional: boolean;
-  max_speed: number;
-}
-
-interface DockingArea {
-  id: string;
-  name: string;
-  x?: number;
-  y?: number;
-  yaw?: number;
-  width?: number;
-  height?: number;
-  polygon_points: number[];
-  assigned_node_id?: string;
-}
-
-interface GraphData {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  docking_areas?: DockingArea[];
-}
-
-type CommandStatus =
-  | 'pending'
-  | 'accepted'
-  | 'in_progress'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
-
-interface RobotCommand {
-  _id: string;
-  robot_name: string;
-  command_type: string;
-  node_id: string;
-  graph_name?: string;
-  node_description?: string;
-  goal: { x: number; y: number; z: number; yaw: number };
-  status: CommandStatus;
-  error_message?: string;
-  created_at: number;
-  updated_at: number;
-  completed_at?: number;
-}
-
-const COMMAND_STATUS_LABEL: Record<CommandStatus, string> = {
-  pending: 'Pending',
-  accepted: 'Accepted',
-  in_progress: 'In Progress',
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-};
-
 const MAP_STORAGE_KEY = 'dashboard_selected_map';
 const ROBOT_STORAGE_KEY = 'dashboard_selected_robot';
 const GRAPH_STORAGE_KEY_PREFIX = 'dashboard_graph_id_';
-
-const ACTIVE_COMMAND_STATUSES = new Set<CommandStatus>([
-  'pending',
-  'accepted',
-  'in_progress',
-]);
-
-interface MapSummary {
-  map_name: string;
-  width_px: number;
-  height_px: number;
-  resolution: number;
-}
-
-interface MapRobotInfo {
-  robot_name: string;
-  active_graph_name?: string;
-}
-
-interface GraphListItem {
-  _id: string;
-  graph_name?: string;
-}
 
 function offlineRobot(id: string): Robot {
   return {
     id,
     name: id,
-    status: 'offline',
-    battery: 0,
     position: { x: 0, y: 0 },
     orientation: 0,
-    currentTask: '',
-    speed: 0,
-    temperature: 0,
-    capabilities: { maxSpeed: 0, maxPayload: 0, sensors: [] },
   };
 }
 
@@ -410,7 +301,7 @@ function DashboardContent() {
         if (res.ok) {
           const text = await res.text();
           const cmd: RobotCommand | null = text ? JSON.parse(text) : null;
-          if (cmd && ACTIVE_COMMAND_STATUSES.has(cmd.status)) {
+          if (cmd && ACTIVE_COMMAND_STATUS_SET.has(cmd.status)) {
             setActiveCommand(cmd);
           } else {
             setActiveCommand(null);
@@ -440,23 +331,17 @@ function DashboardContent() {
         name: robot.name,
         position: robot.position,
         orientation: robot.orientation,
-        status: robot.status,
-        battery: robot.battery,
-        currentTask: robot.currentTask,
+        lastSeen: robot.lastSeen,
         speed: robot.speed,
-        temperature: robot.temperature,
       })),
     [robotsOnMap]
   );
 
   // WebSocket bağlantısı ve robot verilerini alma
   useEffect(() => {
-    console.log('Setting up WebSocket connection...');
-
     const handleRobotsData = (robotsData: Robot[]) => {
       const now = Date.now();
       setWsConnected(true);
-      console.log('Received robots data via WebSocket:', robotsData.length, 'robots');
 
       setClientLastSeen((prev) => {
         const next = { ...prev };
@@ -466,13 +351,7 @@ function DashboardContent() {
         return next;
       });
 
-      const hasChanged = JSON.stringify(robots) !== JSON.stringify(robotsData);
-      if (hasChanged) {
-        setRobots(robotsData);
-        console.log('Robot data updated via WebSocket');
-      }
-      
-      // Hata durumunu temizle
+      setRobots(robotsData);
       setError(null);
     };
 
@@ -481,15 +360,12 @@ function DashboardContent() {
       setError(errorMessage);
     };
 
-    // WebSocket bağlantısını başlat
     robotWebSocketService.connect(handleRobotsData, handleError);
 
-    // Cleanup function
     return () => {
-      console.log('Cleaning up WebSocket connection...');
       robotWebSocketService.disconnect();
     };
-  }, []); // Boş dependency array - sadece mount/unmount'ta çalışsın
+  }, []);
 
   if (mapsLoading) {
     return (
@@ -538,7 +414,7 @@ function DashboardContent() {
       if (res.ok) {
         const text = await res.text();
         const cmd: RobotCommand | null = text ? JSON.parse(text) : null;
-        if (cmd && ACTIVE_COMMAND_STATUSES.has(cmd.status)) {
+        if (cmd && ACTIVE_COMMAND_STATUS_SET.has(cmd.status)) {
           setActiveCommand(cmd);
         } else {
           setActiveCommand(null);
@@ -705,7 +581,7 @@ function DashboardContent() {
 
       {mapRobots.length === 0 && (
         <div className="dashboard-hint">
-          No robots registered on this map. Add robots in the Robots page.
+          No robots on this map yet. Robots appear here when they connect and are assigned to this map.
         </div>
       )}
 
