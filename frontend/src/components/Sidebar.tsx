@@ -73,7 +73,6 @@ const Sidebar = ({
         </svg>
       ), 
       label: 'Maps',
-      comingSoon: true,
     },
     { 
       id: 'analytics', 

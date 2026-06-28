@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar'
 import DashboardContent from './components/DashboardContent'
 import GraphEditor from './components/GraphEditor'
 import RobotsContent from './components/RobotsContent'
+import MapsContent from './components/MapsContent'
 
 const MAP_STORAGE_KEY = 'dashboard_selected_map';
 const ROBOT_STORAGE_KEY = 'dashboard_selected_robot';
@@ -47,11 +48,17 @@ function App() {
         )}
         
         {activeMenuItem === 'maps' && (
-          <main className="main-content">
-            <div className="grid-container">
-              <h2>Maps Page - Coming Soon</h2>
-            </div>
-          </main>
+          <MapsContent
+            onOpenDashboard={(mapName) => {
+              localStorage.setItem(MAP_STORAGE_KEY, mapName);
+              localStorage.removeItem(ROBOT_STORAGE_KEY);
+              setActiveMenuItem('dashboard');
+            }}
+            onOpenGraphEditor={(mapName) => {
+              localStorage.setItem('graph_editor_selected_map', mapName);
+              setActiveMenuItem('graph-editor');
+            }}
+          />
         )}
         
         {activeMenuItem === 'graph-editor' && <GraphEditor />}
