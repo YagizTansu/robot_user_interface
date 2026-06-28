@@ -3,6 +3,7 @@ import '../styles/DashboardContent.css';
 import RobotMap from './RobotMap';
 import robotWebSocketService from '../services/robotWebSocketService';
 import { BACKEND_URL } from '../config';
+import { isRobotOnline } from '../utils/robotTime';
 
 interface Robot {
   id: string;
@@ -14,6 +15,7 @@ interface Robot {
   currentTask: string;
   speed: number;
   temperature: number;
+  lastSeen?: number;
   capabilities: {
     maxSpeed: number;
     maxPayload: number;
@@ -150,6 +152,8 @@ function DashboardContent() {
   const [latestCommand, setLatestCommand] = useState<RobotCommand | null>(null);
   const [sendRobotLoading, setSendRobotLoading] = useState(false);
   const [commandToast, setCommandToast] = useState<string | null>(null);
+  const [clientLastSeen, setClientLastSeen] = useState<Record<string, number>>({});
+  const [onlineTick, setOnlineTick] = useState(0);
   const isInitialLoad = useRef(true);
 
   const mapRobotNames = useMemo(
@@ -181,6 +185,25 @@ function DashboardContent() {
       offlineRobot(id)
     );
   }, [effectiveRobotId, robotsOnMap, selectableRobots]);
+
+  const isRobotOnlineOnDashboard = (robotId: string): boolean => {
+    const live = robotsOnMap.find((r) => r.id === robotId);
+    if (!live) return false;
+    return isRobotOnline(true, clientLastSeen[robotId], live.lastSeen);
+  };
+
+  const robotOnlineMap = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    for (const robot of selectableRobots) {
+      map[robot.id] = isRobotOnlineOnDashboard(robot.id);
+    }
+    return map;
+    // onlineTick: re-evaluate 30s offline threshold
+  }, [selectableRobots, robotsOnMap, clientLastSeen, onlineTick]);
+
+  const currentRobotIsOnline = effectiveRobotId
+    ? (robotOnlineMap[effectiveRobotId] ?? false)
+    : false;
 
   // Load available maps
   useEffect(() => {
@@ -335,6 +358,12 @@ function DashboardContent() {
     return () => clearInterval(interval);
   }, [effectiveRobotId]);
 
+  // Re-check online threshold periodically (same as Robots page)
+  useEffect(() => {
+    const interval = setInterval(() => setOnlineTick((t) => t + 1), 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   // useMemo before conditional returns
   const robotsWithFullData = useMemo(
     () =>
@@ -358,9 +387,17 @@ function DashboardContent() {
     setLoading(true);
 
     const handleRobotsData = (robotsData: Robot[]) => {
+      const now = Date.now();
       console.log('Received robots data via WebSocket:', robotsData.length, 'robots');
-      
-      // Gereksiz re-render'ları önlemek için data karşılaştırması
+
+      setClientLastSeen((prev) => {
+        const next = { ...prev };
+        robotsData.forEach((r) => {
+          next[r.id] = now;
+        });
+        return next;
+      });
+
       const hasChanged = JSON.stringify(robots) !== JSON.stringify(robotsData);
       if (hasChanged || isInitialLoad.current) {
         setRobots(robotsData);
@@ -431,15 +468,6 @@ function DashboardContent() {
 
   const handleRobotChange = (robotId: string) => {
     setSelectedRobotId(robotId);
-  };
-
-  const getStatusDotClass = (status: string) => {
-    const s = status.toLowerCase();
-    if (s === 'active' || s === 'online') return 'online';
-    if (s === 'idle') return 'idle';
-    if (s === 'charging') return 'charging';
-    if (s === 'error') return 'error';
-    return 'online';
   };
 
   const refreshLatestCommand = async () => {
@@ -540,7 +568,7 @@ function DashboardContent() {
                 selectableRobots.map((robot) => (
                   <option key={robot.id} value={robot.id}>
                     {robot.name || robot.id}
-                    {robot.status === 'offline' ? ' (offline)' : ''}
+                    {!robotOnlineMap[robot.id] ? ' (offline)' : ''}
                   </option>
                 ))
               )}
@@ -549,31 +577,8 @@ function DashboardContent() {
 
           <div className="status-indicators">
             <div className="status-item">
-              <div className={`status-dot ${getStatusDotClass(currentRobot.status)}`}></div>
-              <span className="status-text">{currentRobot.status}</span>
-            </div>
-            <div className="status-item">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="status-icon">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14,2 14,8 20,8"/>
-              </svg>
-              <span className="status-text">{currentRobot.currentTask || 'No task'}</span>
-            </div>
-            <div className="status-item battery-item">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="status-icon">
-                <rect x="1" y="6" width="18" height="12" rx="2"/>
-                <line x1="23" y1="11" x2="23" y2="13"/>
-              </svg>
-              <div className="battery-bar">
-                <div
-                  className="battery-fill"
-                  style={{
-                    width: `${currentRobot.battery}%`,
-                    background: currentRobot.battery > 20 ? '#10b981' : '#ef4444'
-                  }}
-                />
-              </div>
-              <span className="status-text">{currentRobot.battery}%</span>
+              <div className={`status-dot ${currentRobotIsOnline ? 'online' : 'offline'}`}></div>
+              <span className="status-text">{currentRobotIsOnline ? 'Online' : 'Offline'}</span>
             </div>
           </div>
         </div>
