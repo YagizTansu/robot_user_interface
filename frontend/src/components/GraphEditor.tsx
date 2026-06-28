@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import '../styles/GraphEditor.css';
 import RobotMap from './RobotMap';
 import { BACKEND_URL } from '../config';
@@ -75,7 +75,27 @@ function GraphEditor() {
   const [showNewGraphModal, setShowNewGraphModal] = useState(false);
   const [newGraphName, setNewGraphName] = useState('');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState<{ name: string; data: GraphData } | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isDirty = useMemo(() => {
+    if (!selectedGraphId || !graphData || !savedSnapshot) return false;
+    return (
+      editingGraphName !== savedSnapshot.name ||
+      JSON.stringify(graphData) !== JSON.stringify(savedSnapshot.data)
+    );
+  }, [selectedGraphId, graphData, editingGraphName, savedSnapshot]);
+
+  const confirmDiscardChanges = useCallback((): boolean => {
+    if (!isDirty) return true;
+    return window.confirm('You have unsaved changes. Discard them?');
+  }, [isDirty]);
+
+  const requestMapChange = (newMap: string | null) => {
+    if (!confirmDiscardChanges()) return;
+    setMapName(newMap);
+  };
 
   useEffect(() => {
     const init = async () => {
@@ -184,19 +204,28 @@ function GraphEditor() {
   };
 
   useEffect(() => {
-    if (!selectedGraphId) { setGraphData(null); setEditingGraphName(''); return; }
+    if (!selectedGraphId) {
+      setGraphData(null);
+      setEditingGraphName('');
+      setSavedSnapshot(null);
+      setLastSavedAt(null);
+      return;
+    }
     const load = async () => {
       try {
         const res = await fetch(`${BACKEND_URL}/graphs/${selectedGraphId}`);
         if (res.ok) {
           const record = await res.json();
           const g = record.graph ?? { nodes: [], edges: [] };
-          setGraphData({
+          const normalized: GraphData = {
             nodes: g.nodes ?? [],
             edges: g.edges ?? [],
             docking_areas: g.docking_areas ?? [],
-          });
+          };
+          setGraphData(normalized);
           setEditingGraphName(record.graph_name);
+          setSavedSnapshot({ name: record.graph_name, data: normalized });
+          setLastSavedAt(record.timestamp ?? Date.now());
         }
       } catch (e) {
         console.error('Failed to load graph:', e);
@@ -204,6 +233,17 @@ function GraphEditor() {
     };
     load();
   }, [selectedGraphId]);
+
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
 
   const showStatus = (msg: string) => {
     setStatusMsg(msg);
@@ -216,8 +256,27 @@ function GraphEditor() {
   };
 
   const handleGraphSelect = (id: string | null) => {
+    if (id !== selectedGraphId && !confirmDiscardChanges()) return;
     setSelectedGraphId(id);
     resetEditModes();
+  };
+
+  const handleSave = async (): Promise<boolean> => {
+    if (!selectedGraphId || !graphData) return false;
+    const res = await fetch(`${BACKEND_URL}/graphs/${selectedGraphId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ graph_name: editingGraphName, graph: graphData }),
+    });
+    if (res.ok) {
+      setSavedSnapshot({ name: editingGraphName, data: graphData });
+      setLastSavedAt(Date.now());
+      showStatus('Saved');
+      await fetchGraphList();
+      return true;
+    }
+    showStatus('Save failed');
+    return false;
   };
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -254,16 +313,6 @@ function GraphEditor() {
     e.target.value = '';
   };
 
-  const handleSave = async () => {
-    if (!selectedGraphId || !graphData) return;
-    const res = await fetch(`${BACKEND_URL}/graphs/${selectedGraphId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ graph_name: editingGraphName, graph: graphData }),
-    });
-    if (res.ok) { showStatus('Saved'); await fetchGraphList(); }
-    else showStatus('Save failed');
-  };
 
   const handleDownload = () => {
     if (!graphData) return;
@@ -279,6 +328,10 @@ function GraphEditor() {
       showStatus('Select a robot to activate this graph');
       return;
     }
+    if (isDirty) {
+      const saved = await handleSave();
+      if (!saved) return;
+    }
     const res = await fetch(
       `${BACKEND_URL}/graphs/${selectedGraphId}/activate/${encodeURIComponent(selectedRobotName)}`,
       { method: 'PUT' }
@@ -292,9 +345,13 @@ function GraphEditor() {
   const handleDelete = async () => {
     if (!selectedGraphId) return;
     await fetch(`${BACKEND_URL}/graphs/${selectedGraphId}`, { method: 'DELETE' });
-    setSelectedGraphId(null); setGraphData(null);
+    setSelectedGraphId(null);
+    setGraphData(null);
+    setSavedSnapshot(null);
+    setLastSavedAt(null);
     setShowDeleteModal(false);
-    showStatus('Deleted'); await fetchGraphList();
+    showStatus('Deleted');
+    await fetchGraphList();
   };
 
   const handleNewGraph = async () => {
@@ -346,6 +403,25 @@ function GraphEditor() {
 
   const isEdgeMode = selectedNodeForEdge !== null;
   const edgeStep = selectedNodeForEdge === 'init' ? 'select-from' : selectedNodeForEdge ? 'select-to' : null;
+  const dockingCount = graphData?.docking_areas?.length ?? 0;
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        if (isDirty) void handleSave();
+      } else if (e.key === 'Escape') {
+        resetEditModes();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isDirty, selectedGraphId, graphData, editingGraphName]);
+
+  const formatSavedTime = (ts: number) =>
+    new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
     <main className="graph-editor-layout">
@@ -361,7 +437,7 @@ function GraphEditor() {
           <select
             className="panel-select"
             value={mapName ?? ''}
-            onChange={(e) => setMapName(e.target.value || null)}
+            onChange={(e) => requestMapChange(e.target.value || null)}
             disabled={maps.length === 0}
           >
             {maps.length === 0 ? (
@@ -440,9 +516,18 @@ function GraphEditor() {
           <div className="panel-section">
             <label className="panel-section-label">Actions</label>
             <div className="panel-actions">
-              <button className="panel-btn primary" onClick={handleSave}>
-                <IconSave /> Save
+              <button
+                className={`panel-btn primary ${isDirty ? 'unsaved' : ''}`}
+                onClick={() => void handleSave()}
+              >
+                <IconSave /> {isDirty ? 'Save *' : 'Save'}
               </button>
+              {!isDirty && lastSavedAt && (
+                <span className="panel-save-hint">Saved at {formatSavedTime(lastSavedAt)}</span>
+              )}
+              {isDirty && (
+                <span className="panel-save-hint unsaved">Unsaved changes</span>
+              )}
               <div className="panel-btn-row">
                 <button className="panel-btn" onClick={handleDownload}>
                   <IconDownload /> Export
@@ -476,6 +561,7 @@ function GraphEditor() {
           {graphData && (
             <span className="meta-pill stats">
               {graphData.nodes.length} nodes · {graphData.edges.length} edges
+              {dockingCount > 0 ? ` · ${dockingCount} docking` : ''}
             </span>
           )}
         </div>
@@ -499,6 +585,19 @@ function GraphEditor() {
                 {' '}Press <kbd>Add Edge</kbd> again to exit.
               </>
             )}
+          </div>
+        )}
+
+        {selectedGraphId && !isAddingNode && !isEdgeMode && (
+          <div className="mode-hint-bar mode-hint-bar--info">
+            Use the blue docking tool in the map zoom controls to draw docking areas.
+          </div>
+        )}
+
+        {!selectedGraphId && (
+          <div className="graph-empty-state">
+            <h3>Select or create a graph</h3>
+            <p>Choose a graph from the left panel, or create a new one to start editing nodes and edges.</p>
           </div>
         )}
 

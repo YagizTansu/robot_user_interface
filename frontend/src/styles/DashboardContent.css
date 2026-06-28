@@ -28,7 +28,8 @@
 
 /* Map & Robot Selectors */
 .map-selector,
-.robot-selector {
+.robot-selector,
+.graph-selector {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -51,7 +52,8 @@
 }
 
 .robot-selector select,
-.map-selector select {
+.map-selector select,
+.graph-selector select {
   padding: 6px 12px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
@@ -65,12 +67,14 @@
 }
 
 .robot-selector select:hover,
-.map-selector select:hover {
+.map-selector select:hover,
+.graph-selector select:hover {
   border-color: rgba(26, 26, 26, 0.2);
 }
 
 .robot-selector select:focus,
-.map-selector select:focus {
+.map-selector select:focus,
+.graph-selector select:focus {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.08);
@@ -96,6 +100,41 @@
 
 .no-data {
   color: #8e8e93;
+}
+
+.ws-connecting-banner {
+  padding: 8px 24px;
+  background: #fffbeb;
+  border-bottom: 1px solid #fde68a;
+  color: #92400e;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  text-align: center;
+}
+
+.dashboard-hint {
+  padding: 8px 24px;
+  background: var(--color-surface-muted);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.graph-pill {
+  padding: 4px 10px;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.graph-pill.active {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+  color: #047857;
 }
 
 /* Status Indicators */

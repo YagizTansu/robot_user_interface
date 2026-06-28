@@ -48,6 +48,8 @@ interface RobotMapProps {
   selectedNodeForEdge?: string | null;
   onNodeSelectedForEdge?: (nodeId: string) => void;
   enableSendRobot?: boolean;
+  sendRobotDisabled?: boolean;
+  sendRobotDisabledReason?: string;
   onSendRobotToNode?: (node: GraphNode) => void | Promise<void>;
   sendRobotLoading?: boolean;
 }
@@ -395,6 +397,8 @@ const RobotMap: React.FC<RobotMapProps> = ({
   selectedNodeForEdge = null,
   onNodeSelectedForEdge,
   enableSendRobot = false,
+  sendRobotDisabled = false,
+  sendRobotDisabledReason,
   onSendRobotToNode,
   sendRobotLoading = false,
 }) => {
@@ -2001,7 +2005,8 @@ const RobotMap: React.FC<RobotMapProps> = ({
                 {enableSendRobot && onSendRobotToNode && (
                   <button
                     onClick={() => onSendRobotToNode(selectedNode)}
-                    disabled={sendRobotLoading}
+                    disabled={sendRobotLoading || sendRobotDisabled}
+                    title={sendRobotDisabled ? (sendRobotDisabledReason ?? 'Cannot send robot') : undefined}
                     style={{
                       width: '100%',
                       marginTop: '10px',
@@ -2009,10 +2014,10 @@ const RobotMap: React.FC<RobotMapProps> = ({
                       fontSize: '12px',
                       fontWeight: '600',
                       color: '#ffffff',
-                      background: sendRobotLoading ? '#9ca3af' : '#1a1a1a',
+                      background: sendRobotLoading || sendRobotDisabled ? '#9ca3af' : '#1a1a1a',
                       border: 'none',
                       borderRadius: '8px',
-                      cursor: sendRobotLoading ? 'not-allowed' : 'pointer',
+                      cursor: sendRobotLoading || sendRobotDisabled ? 'not-allowed' : 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',

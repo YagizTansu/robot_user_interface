@@ -312,6 +312,58 @@
   font-family: inherit;
 }
 
+.mode-hint-bar--info {
+  bottom: 88px;
+  background: rgba(239, 246, 255, 0.95);
+  border-color: #bfdbfe;
+  color: #1e40af;
+  white-space: normal;
+  text-align: center;
+}
+
+.panel-save-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.panel-save-hint.unsaved {
+  color: #b45309;
+  font-weight: 500;
+}
+
+.panel-btn.unsaved {
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.35);
+}
+
+.graph-empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  z-index: 40;
+  pointer-events: none;
+  text-align: center;
+  padding: 24px;
+}
+
+.graph-empty-state h3 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  color: var(--color-text);
+}
+
+.graph-empty-state p {
+  margin: 0;
+  max-width: 360px;
+  font-size: var(--font-size-base);
+  color: var(--color-text-muted);
+}
+
 /* ── Toast ── */
 .graph-toast {
   position: absolute;

@@ -108,6 +108,13 @@ const COMMAND_STATUS_LABEL: Record<CommandStatus, string> = {
 
 const MAP_STORAGE_KEY = 'dashboard_selected_map';
 const ROBOT_STORAGE_KEY = 'dashboard_selected_robot';
+const GRAPH_STORAGE_KEY_PREFIX = 'dashboard_graph_id_';
+
+const ACTIVE_COMMAND_STATUSES = new Set<CommandStatus>([
+  'pending',
+  'accepted',
+  'in_progress',
+]);
 
 interface MapSummary {
   map_name: string;
@@ -119,6 +126,11 @@ interface MapSummary {
 interface MapRobotInfo {
   robot_name: string;
   active_graph_name?: string;
+}
+
+interface GraphListItem {
+  _id: string;
+  graph_name?: string;
 }
 
 function offlineRobot(id: string): Robot {
@@ -138,23 +150,25 @@ function offlineRobot(id: string): Robot {
 
 function DashboardContent() {
   const [robots, setRobots] = useState<Robot[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [mapsLoading, setMapsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [maps, setMaps] = useState<MapSummary[]>([]);
-  const [mapsLoading, setMapsLoading] = useState(true);
   const [selectedMapName, setSelectedMapName] = useState<string | null>(null);
   const [mapRobots, setMapRobots] = useState<MapRobotInfo[]>([]);
   const [selectedRobotId, setSelectedRobotId] = useState<string | null>(null);
+  const [graphList, setGraphList] = useState<GraphListItem[]>([]);
+  const [selectedGraphId, setSelectedGraphId] = useState<string | null>(null);
   const [restrictedAreas, setRestrictedAreas] = useState<RestrictedArea[]>([]);
   const [showGraph, setShowGraph] = useState(true);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
-  const [activeGraphName, setActiveGraphName] = useState<string | null>(null);
-  const [latestCommand, setLatestCommand] = useState<RobotCommand | null>(null);
+  const [displayGraphName, setDisplayGraphName] = useState<string | null>(null);
+  const [activeCommand, setActiveCommand] = useState<RobotCommand | null>(null);
   const [sendRobotLoading, setSendRobotLoading] = useState(false);
   const [commandToast, setCommandToast] = useState<string | null>(null);
   const [clientLastSeen, setClientLastSeen] = useState<Record<string, number>>({});
   const [onlineTick, setOnlineTick] = useState(0);
-  const isInitialLoad = useRef(true);
+  const userPickedGraphRef = useRef(false);
 
   const mapRobotNames = useMemo(
     () => new Set(mapRobots.map((r) => r.robot_name)),
@@ -204,6 +218,15 @@ function DashboardContent() {
   const currentRobotIsOnline = effectiveRobotId
     ? (robotOnlineMap[effectiveRobotId] ?? false)
     : false;
+
+  const robotActiveGraphName = useMemo(() => {
+    if (!effectiveRobotId) return null;
+    return mapRobots.find((r) => r.robot_name === effectiveRobotId)?.active_graph_name ?? null;
+  }, [effectiveRobotId, mapRobots]);
+
+  const isDisplayedGraphRobotActive = Boolean(
+    displayGraphName && robotActiveGraphName && displayGraphName === robotActiveGraphName
+  );
 
   // Load available maps
   useEffect(() => {
@@ -261,7 +284,106 @@ function DashboardContent() {
 
     loadMapRobots();
     setRestrictedAreas([]);
+    userPickedGraphRef.current = false;
   }, [selectedMapName]);
+
+  // Load graph list for the selected map
+  useEffect(() => {
+    if (!selectedMapName) {
+      setGraphList([]);
+      setSelectedGraphId(null);
+      return;
+    }
+
+    const loadGraphList = async () => {
+      try {
+        const listRes = await fetch(
+          `${BACKEND_URL}/graphs?map_name=${encodeURIComponent(selectedMapName)}`
+        );
+        if (!listRes.ok) {
+          setGraphList([]);
+          setSelectedGraphId(null);
+          return;
+        }
+
+        const list: GraphListItem[] = await listRes.json();
+        setGraphList(list);
+
+        if (!list.length) {
+          setSelectedGraphId(null);
+          return;
+        }
+
+        if (userPickedGraphRef.current) {
+          setSelectedGraphId((prev) =>
+            prev && list.some((g) => g._id === prev) ? prev : list[0]._id
+          );
+          return;
+        }
+
+        const storageKey = `${GRAPH_STORAGE_KEY_PREFIX}${selectedMapName}`;
+        const stored = localStorage.getItem(storageKey);
+        if (stored && list.some((g) => g._id === stored)) {
+          setSelectedGraphId(stored);
+          return;
+        }
+
+        if (robotActiveGraphName) {
+          const match = list.find((g) => g.graph_name === robotActiveGraphName);
+          if (match) {
+            setSelectedGraphId(match._id);
+            return;
+          }
+        }
+
+        setSelectedGraphId(list[0]._id);
+      } catch {
+        setGraphList([]);
+        setSelectedGraphId(null);
+      }
+    };
+
+    loadGraphList();
+  }, [selectedMapName, robotActiveGraphName]);
+
+  // Load full graph when selection changes
+  useEffect(() => {
+    if (!selectedGraphId) {
+      setGraphData({ nodes: [], edges: [] });
+      setDisplayGraphName(null);
+      return;
+    }
+
+    const loadGraph = async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/graphs/${selectedGraphId}`);
+        if (res.ok) {
+          const full = await res.json();
+          const g = full.graph ?? { nodes: [], edges: [] };
+          setGraphData({
+            nodes: g.nodes ?? [],
+            edges: g.edges ?? [],
+            docking_areas: g.docking_areas ?? [],
+          });
+          setDisplayGraphName(full.graph_name ?? null);
+          if (selectedMapName) {
+            localStorage.setItem(
+              `${GRAPH_STORAGE_KEY_PREFIX}${selectedMapName}`,
+              selectedGraphId
+            );
+          }
+        } else {
+          setGraphData({ nodes: [], edges: [] });
+          setDisplayGraphName(null);
+        }
+      } catch {
+        setGraphData({ nodes: [], edges: [] });
+        setDisplayGraphName(null);
+      }
+    };
+
+    loadGraph();
+  }, [selectedGraphId, selectedMapName]);
 
   // Keep selected robot id in sync with map filter
   useEffect(() => {
@@ -275,78 +397,24 @@ function DashboardContent() {
     });
   }, [selectableRobots, selectedMapName]);
 
-  // Load active graph for the current map / robot
+  // Poll active robot command (pending / accepted / in_progress only)
   useEffect(() => {
-    if (!selectedMapName) return;
-
-    const loadGraphForMap = async () => {
-      try {
-        if (effectiveRobotId) {
-          const activeRes = await fetch(`${BACKEND_URL}/graphs/active/${effectiveRobotId}`);
-          if (activeRes.ok) {
-            const text = await activeRes.text();
-            if (text) {
-              const record = JSON.parse(text);
-              if (record?.graph && record.map_name === selectedMapName) {
-                setGraphData({
-                  nodes: record.graph.nodes ?? [],
-                  edges: record.graph.edges ?? [],
-                  docking_areas: record.graph.docking_areas ?? [],
-                });
-                setActiveGraphName(record.graph_name ?? null);
-                return;
-              }
-            }
-          }
-        }
-        setActiveGraphName(null);
-
-        const listRes = await fetch(
-          `${BACKEND_URL}/graphs?map_name=${encodeURIComponent(selectedMapName)}`
-        );
-        if (!listRes.ok) {
-          setGraphData({ nodes: [], edges: [] });
-          return;
-        }
-        const graphList: { _id: string; graph_name?: string }[] = await listRes.json();
-        if (!graphList.length) {
-          setGraphData({ nodes: [], edges: [] });
-          return;
-        }
-
-        const fullRes = await fetch(`${BACKEND_URL}/graphs/${graphList[0]._id}`);
-        if (fullRes.ok) {
-          const full = await fullRes.json();
-          const g = full.graph ?? { nodes: [], edges: [] };
-          setGraphData({
-            nodes: g.nodes ?? [],
-            edges: g.edges ?? [],
-            docking_areas: g.docking_areas ?? [],
-          });
-          setActiveGraphName(full.graph_name ?? graphList[0].graph_name ?? null);
-        } else {
-          setGraphData({ nodes: [], edges: [] });
-          setActiveGraphName(null);
-        }
-      } catch {
-        setGraphData({ nodes: [], edges: [] });
-        setActiveGraphName(null);
-      }
-    };
-
-    loadGraphForMap();
-  }, [selectedMapName, effectiveRobotId]);
-
-  // Poll latest robot command for status display
-  useEffect(() => {
-    if (!effectiveRobotId) return;
+    if (!effectiveRobotId) {
+      setActiveCommand(null);
+      return;
+    }
 
     const fetchCommand = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/commands/latest/${effectiveRobotId}`);
+        const res = await fetch(`${BACKEND_URL}/commands/active/${effectiveRobotId}`);
         if (res.ok) {
           const text = await res.text();
-          setLatestCommand(text ? JSON.parse(text) : null);
+          const cmd: RobotCommand | null = text ? JSON.parse(text) : null;
+          if (cmd && ACTIVE_COMMAND_STATUSES.has(cmd.status)) {
+            setActiveCommand(cmd);
+          } else {
+            setActiveCommand(null);
+          }
         }
       } catch {
         /* ignore poll errors */
@@ -384,10 +452,10 @@ function DashboardContent() {
   // WebSocket bağlantısı ve robot verilerini alma
   useEffect(() => {
     console.log('Setting up WebSocket connection...');
-    setLoading(true);
 
     const handleRobotsData = (robotsData: Robot[]) => {
       const now = Date.now();
+      setWsConnected(true);
       console.log('Received robots data via WebSocket:', robotsData.length, 'robots');
 
       setClientLastSeen((prev) => {
@@ -399,18 +467,9 @@ function DashboardContent() {
       });
 
       const hasChanged = JSON.stringify(robots) !== JSON.stringify(robotsData);
-      if (hasChanged || isInitialLoad.current) {
+      if (hasChanged) {
         setRobots(robotsData);
         console.log('Robot data updated via WebSocket');
-      } else {
-        console.log('Robot data unchanged - skipping update');
-      }
-      
-      // Sadece ilk yüklemede loading'i kapat
-      if (isInitialLoad.current) {
-        setLoading(false);
-        isInitialLoad.current = false;
-        console.log('Initial load completed via WebSocket');
       }
       
       // Hata durumunu temizle
@@ -420,11 +479,6 @@ function DashboardContent() {
     const handleError = (errorMessage: string) => {
       console.error('WebSocket error:', errorMessage);
       setError(errorMessage);
-      
-      if (isInitialLoad.current) {
-        setLoading(false);
-        isInitialLoad.current = false;
-      }
     };
 
     // WebSocket bağlantısını başlat
@@ -437,7 +491,7 @@ function DashboardContent() {
     };
   }, []); // Boş dependency array - sadece mount/unmount'ta çalışsın
 
-  if (mapsLoading || loading) {
+  if (mapsLoading) {
     return (
       <main className="main-content">
         <div className="loading">Loading dashboard...</div>
@@ -464,19 +518,31 @@ function DashboardContent() {
   const handleMapChange = (mapName: string) => {
     setSelectedMapName(mapName);
     setSelectedRobotId(null);
+    userPickedGraphRef.current = false;
   };
 
   const handleRobotChange = (robotId: string) => {
     setSelectedRobotId(robotId);
+    userPickedGraphRef.current = false;
   };
 
-  const refreshLatestCommand = async () => {
+  const handleGraphChange = (graphId: string) => {
+    userPickedGraphRef.current = true;
+    setSelectedGraphId(graphId || null);
+  };
+
+  const refreshActiveCommand = async () => {
     if (!effectiveRobotId) return;
     try {
-      const res = await fetch(`${BACKEND_URL}/commands/latest/${effectiveRobotId}`);
+      const res = await fetch(`${BACKEND_URL}/commands/active/${effectiveRobotId}`);
       if (res.ok) {
         const text = await res.text();
-        setLatestCommand(text ? JSON.parse(text) : null);
+        const cmd: RobotCommand | null = text ? JSON.parse(text) : null;
+        if (cmd && ACTIVE_COMMAND_STATUSES.has(cmd.status)) {
+          setActiveCommand(cmd);
+        } else {
+          setActiveCommand(null);
+        }
       }
     } catch { /* ignore */ }
   };
@@ -491,7 +557,7 @@ function DashboardContent() {
         body: JSON.stringify({
           robot_name: currentRobot.id,
           node_id: node.id,
-          graph_name: activeGraphName ?? undefined,
+          graph_name: displayGraphName ?? undefined,
           node_description: node.description,
           goal: {
             x: node.x,
@@ -514,7 +580,7 @@ function DashboardContent() {
       }
 
       setCommandToast(`Command sent to ${node.description || node.id}`);
-      await refreshLatestCommand();
+      await refreshActiveCommand();
       setTimeout(() => setCommandToast(null), 3000);
     } catch {
       setCommandToast('Failed to send robot');
@@ -537,6 +603,12 @@ function DashboardContent() {
 
   return (
     <main className="main-content">
+      {!wsConnected && (
+        <div className="ws-connecting-banner">
+          Connecting to robots… Live position may be unavailable.
+        </div>
+      )}
+
       <div className="dashboard-header">
         <div className="header-left">
           <div className="map-selector">
@@ -575,6 +647,34 @@ function DashboardContent() {
             </select>
           </div>
 
+          <div className="graph-selector">
+            <label htmlFor="graph-select" className="robot-selector-label">Graph</label>
+            <select
+              id="graph-select"
+              value={selectedGraphId ?? ''}
+              onChange={(e) => handleGraphChange(e.target.value)}
+              disabled={graphList.length === 0}
+            >
+              {graphList.length === 0 ? (
+                <option value="">No graphs</option>
+              ) : (
+                graphList.map((g) => (
+                  <option key={g._id} value={g._id}>
+                    {g.graph_name === robotActiveGraphName ? '✓ ' : ''}
+                    {g.graph_name ?? g._id}
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
+
+          {displayGraphName && (
+            <span className={`graph-pill ${isDisplayedGraphRobotActive ? 'active' : ''}`}>
+              {displayGraphName}
+              {isDisplayedGraphRobotActive ? ' · robot active' : ''}
+            </span>
+          )}
+
           <div className="status-indicators">
             <div className="status-item">
               <div className={`status-dot ${currentRobotIsOnline ? 'online' : 'offline'}`}></div>
@@ -603,21 +703,33 @@ function DashboardContent() {
         </div>
       </div>
 
-      {latestCommand && (
-        <div className={`command-status-bar command-status-bar--${getCommandStatusClass(latestCommand.status)}`}>
+      {mapRobots.length === 0 && (
+        <div className="dashboard-hint">
+          No robots registered on this map. Add robots in the Robots page.
+        </div>
+      )}
+
+      {graphList.length === 0 && selectedMapName && (
+        <div className="dashboard-hint">
+          No navigation graphs for this map. Create one in Graph Editor.
+        </div>
+      )}
+
+      {activeCommand && (
+        <div className={`command-status-bar command-status-bar--${getCommandStatusClass(activeCommand.status)}`}>
           <div className="command-status-main">
-            <span className={`command-status-badge command-status-badge--${getCommandStatusClass(latestCommand.status)}`}>
-              {COMMAND_STATUS_LABEL[latestCommand.status]}
+            <span className={`command-status-badge command-status-badge--${getCommandStatusClass(activeCommand.status)}`}>
+              {COMMAND_STATUS_LABEL[activeCommand.status]}
             </span>
             <span className="command-status-target">
-              → {latestCommand.node_description || latestCommand.node_id}
+              → {activeCommand.node_description || activeCommand.node_id}
             </span>
             <span className="command-status-goal">
-              ({latestCommand.goal.x.toFixed(2)}m, {latestCommand.goal.y.toFixed(2)}m, {((latestCommand.goal.yaw * 180) / Math.PI).toFixed(0)}°)
+              ({activeCommand.goal.x.toFixed(2)}m, {activeCommand.goal.y.toFixed(2)}m, {((activeCommand.goal.yaw * 180) / Math.PI).toFixed(0)}°)
             </span>
           </div>
-          {latestCommand.error_message && (
-            <span className="command-status-error">{latestCommand.error_message}</span>
+          {activeCommand.error_message && (
+            <span className="command-status-error">{activeCommand.error_message}</span>
           )}
         </div>
       )}
@@ -637,6 +749,8 @@ function DashboardContent() {
             graphData={graphData || undefined}
             showGraph={showGraph}
             enableSendRobot={true}
+            sendRobotDisabled={!currentRobotIsOnline}
+            sendRobotDisabledReason="Robot is offline"
             onSendRobotToNode={handleSendRobotToNode}
             sendRobotLoading={sendRobotLoading}
           />
