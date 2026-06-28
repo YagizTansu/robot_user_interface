@@ -1,70 +1,65 @@
-import { useState } from 'react'
-import './App.css'
-import Sidebar from './components/Sidebar'
-import DashboardContent from './components/DashboardContent'
-import GraphEditor from './components/GraphEditor'
-import RobotsContent from './components/RobotsContent'
-import MapsContent from './components/MapsContent'
+import { useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import './App.css';
+import Sidebar from './components/Sidebar';
+import Header from './components/Header';
+import DashboardContent from './components/DashboardContent';
+import GraphEditor from './components/GraphEditor';
+import RobotsContent from './components/RobotsContent';
+import MapsContent from './components/MapsContent';
+import { RobotWebSocketProvider } from './contexts/RobotWebSocketContext';
 
-const MAP_STORAGE_KEY = 'dashboard_selected_map';
-const ROBOT_STORAGE_KEY = 'dashboard_selected_robot';
+function AppLayout() {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-function App() {
-  const [activeMenuItem, setActiveMenuItem] = useState('dashboard')
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [mobileMenuOpen] = useState(false)
+  const closeMobileMenu = () => setMobileMenuOpen(false);
 
   return (
     <div className="dashboard">
-      {/* Sidebar */}
+      {mobileMenuOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close menu"
+          onClick={closeMobileMenu}
+        />
+      )}
+
       <Sidebar
-        activeMenuItem={activeMenuItem}
-        setActiveMenuItem={setActiveMenuItem}
         sidebarCollapsed={sidebarCollapsed}
         setSidebarCollapsed={setSidebarCollapsed}
         mobileMenuOpen={mobileMenuOpen}
+        onNavigate={closeMobileMenu}
       />
 
-      {/* Main Content */}
       <div className={`main-wrapper ${sidebarCollapsed ? 'collapsed' : ''}`}>
-        {/* Header */}
-        {/* <Header
+        <Header
           mobileMenuOpen={mobileMenuOpen}
           setMobileMenuOpen={setMobileMenuOpen}
-        /> */}
+        />
 
-        {/* Dashboard Content */}
-        {activeMenuItem === 'dashboard' && <DashboardContent />}
-        
-        {/* Placeholder for other pages */}
-        {activeMenuItem === 'robots' && (
-          <RobotsContent
-            onOpenDashboard={(mapName, robotName) => {
-              localStorage.setItem(MAP_STORAGE_KEY, mapName);
-              localStorage.setItem(ROBOT_STORAGE_KEY, robotName);
-              setActiveMenuItem('dashboard');
-            }}
-          />
-        )}
-        
-        {activeMenuItem === 'maps' && (
-          <MapsContent
-            onOpenDashboard={(mapName) => {
-              localStorage.setItem(MAP_STORAGE_KEY, mapName);
-              localStorage.removeItem(ROBOT_STORAGE_KEY);
-              setActiveMenuItem('dashboard');
-            }}
-            onOpenGraphEditor={(mapName) => {
-              localStorage.setItem('graph_editor_selected_map', mapName);
-              setActiveMenuItem('graph-editor');
-            }}
-          />
-        )}
-        
-        {activeMenuItem === 'graph-editor' && <GraphEditor />}
+        <Routes>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<DashboardContent />} />
+          <Route path="/graph-editor" element={<GraphEditor />} />
+          <Route path="/robots" element={<RobotsContent />} />
+          <Route path="/maps" element={<MapsContent />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
       </div>
     </div>
-  )
+  );
 }
 
-export default App
+function App() {
+  return (
+    <BrowserRouter>
+      <RobotWebSocketProvider>
+        <AppLayout />
+      </RobotWebSocketProvider>
+    </BrowserRouter>
+  );
+}
+
+export default App;

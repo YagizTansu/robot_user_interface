@@ -70,6 +70,28 @@ npm run dev
 
 Open the URL shown by Vite (typically `http://localhost:5173`).
 
+### Routes
+
+| Path | Page |
+|------|------|
+| `/dashboard` | Live map, robot control |
+| `/graph-editor` | Graph editing |
+| `/robots` | Fleet management |
+| `/maps` | Map browser |
+
+`/ ` redirects to `/dashboard`. Browser back/forward and bookmarkable URLs are supported.
+
+## API highlights
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | MongoDB connection status |
+| GET | `/maps` | Map summaries (no image payload) |
+| GET | `/maps/:name/meta` | Map metadata without image |
+| GET | `/maps/:name/thumbnail` | Map PNG only |
+| GET | `/maps/:name` | Full map record |
+| WS | `command-update` | Real-time robot command status changes |
+
 ## Main pages
 
 - **Dashboard** — Live map, graph overlay, send robot to node

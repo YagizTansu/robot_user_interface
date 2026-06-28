@@ -9,6 +9,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { RobotPose, RobotPoseDocument } from '../robots/schemas/robot.schema';
+import {
+  RobotCommand,
+  RobotCommandDocument,
+} from '../commands/schemas/robot-command.schema';
 import { RobotsService } from '../robots/robots.service';
 
 @Injectable()
@@ -23,21 +27,26 @@ export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server: Server;
 
   private changeStream: any;
+  private commandChangeStream: any;
 
   constructor(
     @InjectModel(RobotPose.name) private robotPoseModel: Model<RobotPoseDocument>,
+    @InjectModel(RobotCommand.name)
+    private commandModel: Model<RobotCommandDocument>,
     private robotsService: RobotsService,
   ) {}
 
   async onModuleInit() {
-    // MongoDB Change Streams'i başlat
     this.initChangeStreams();
+    this.initCommandChangeStream();
   }
 
   async onModuleDestroy() {
-    // Change Streams'i temizle
     if (this.changeStream) {
       await this.changeStream.close();
+    }
+    if (this.commandChangeStream) {
+      await this.commandChangeStream.close();
     }
   }
 
@@ -104,6 +113,40 @@ export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch (error) {
       console.error('Error initializing change streams:', error);
     }
+  }
+
+  private initCommandChangeStream() {
+    try {
+      this.commandChangeStream = this.commandModel.watch([], {
+        fullDocument: 'updateLookup',
+      });
+
+      this.commandChangeStream.on('change', (change: { fullDocument?: RobotCommandDocument }) => {
+        const doc = change.fullDocument;
+        if (!doc) return;
+        this.server.emit('command-update', this.serializeCommand(doc));
+      });
+
+      this.commandChangeStream.on('error', (error: Error) => {
+        console.error('Command change stream error:', error);
+        setTimeout(() => {
+          console.log('Attempting to restart command change stream...');
+          this.initCommandChangeStream();
+        }, 5000);
+      });
+
+      console.log('MongoDB Change Streams initialized for robot_commands collection');
+    } catch (error) {
+      console.error('Error initializing command change streams:', error);
+    }
+  }
+
+  private serializeCommand(doc: RobotCommandDocument) {
+    const obj = doc.toObject();
+    return {
+      ...obj,
+      _id: String(obj._id),
+    };
   }
 
   // Manuel olarak robot verilerini yayınlamak için kullanılabilir

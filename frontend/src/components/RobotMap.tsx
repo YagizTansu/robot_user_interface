@@ -1,329 +1,31 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import '../styles/RobotMap.css';
 import { apiFetch, ApiError } from '../api';
-import type { Robot, GraphNode, DockingArea, GraphData, MapData } from '../types';
+import type { GraphNode, MapData, MapMeta, MapThumbnail } from '../types';
+import type {
+  RobotMapProps,
+  RestrictedArea,
+  ProhibitedZone,
+  DockPoseEdit,
+  PolygonCreationMode,
+  MapViewSettings,
+  Point,
+} from './robot-map/types';
+import { getNodeRadius, getNodeYaw, NODE_R_ACTIVE } from './robot-map/constants';
+import { loadMapViewSettings, saveMapViewSettings } from './robot-map/mapViewStorage';
+import {
+  yawFromPixelDelta,
+  yawToHandlePos,
+  radToDeg,
+  degToRad,
+  deriveDockingFromPolygon,
+  normalizeDockingArea,
+  rosYawDegToSvgRotate,
+  getStatusColor,
+} from './robot-map/geometry';
+import { renderRobotMarker, renderInnerNodeArrow } from './robot-map/markers';
 
-interface RobotMapProps {
-  robotName?: string;
-  mapName?: string;
-  robots?: Robot[];
-  coordinateSystem?: {
-    type: 'percentage' | 'coordinate';
-    maxX?: number;
-    maxY?: number;
-  };
-  enablePolygonDrawing?: boolean;
-  /** Dashboard: restricted + docking. Graph Editor: docking only (no red zones). */
-  enableDockingDrawing?: boolean;
-  zonesReadOnly?: boolean;
-  restrictedAreas?: RestrictedArea[];
-  onRestrictedAreasChange?: (areas: RestrictedArea[]) => void;
-  graphData?: GraphData;
-  showGraph?: boolean;
-  // Graph editing props
-  isGraphEditorMode?: boolean;
-  onGraphDataChange?: (data: GraphData) => void;
-  isAddingNode?: boolean;
-  onNodeAdded?: () => void;
-  selectedNodeForEdge?: string | null;
-  onNodeSelectedForEdge?: (nodeId: string) => void;
-  enableSendRobot?: boolean;
-  sendRobotDisabled?: boolean;
-  sendRobotDisabledReason?: string;
-  onSendRobotToNode?: (node: GraphNode) => void | Promise<void>;
-  sendRobotLoading?: boolean;
-  onMapNotify?: (message: string, variant?: 'info' | 'error' | 'success') => void;
-}
-
-interface Point {
-  x: number;
-  y: number;
-}
-
-interface RestrictedArea {
-  id: string;
-  name: string;
-  startPoint?: Point;
-  endPoint?: Point;
-  polygonPoints?: number[]; // ROS koordinatları [x1, y1, x2, y2, ...]
-  color: string;
-  type: 'restricted' | 'docking-pallet' | 'polygon';
-  zoneType?: 'restricted' | 'docking-pallet';
-  isSelected?: boolean;
-  mapName?: string;
-}
-
-interface ProhibitedZone {
-  _id: string;
-  map_name: string;
-  zone_name: string;
-  zone_type: string;
-  polygon_points: number[];
-  timestamp: number;
-}
-
-interface DockPoseEdit {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  yaw: number;
-}
-
-interface PolygonCreationMode {
-  isActive: boolean;
-  type: 'restricted' | 'docking-pallet';
-  startPoint?: Point;
-}
-
-const MAP_VIEW_STORAGE_KEY = 'robot_map_view_settings';
-
-interface MapViewSettings {
-  rotation: number;
-  zoom: number;
-  pan: { x: number; y: number };
-}
-
-function loadMapViewSettings(mapKey: string): MapViewSettings | null {
-  try {
-    const raw = localStorage.getItem(MAP_VIEW_STORAGE_KEY);
-    if (!raw) return null;
-    const all = JSON.parse(raw) as Record<string, MapViewSettings>;
-    const saved = all[mapKey];
-    if (!saved) return null;
-    return {
-      rotation: saved.rotation ?? 0,
-      zoom: saved.zoom ?? 1,
-      pan: saved.pan ?? { x: 0, y: 0 },
-    };
-  } catch {
-    return null;
-  }
-}
-
-function saveMapViewSettings(mapKey: string, settings: MapViewSettings) {
-  try {
-    const raw = localStorage.getItem(MAP_VIEW_STORAGE_KEY);
-    const all = raw ? JSON.parse(raw) : {};
-    all[mapKey] = settings;
-    localStorage.setItem(MAP_VIEW_STORAGE_KEY, JSON.stringify(all));
-  } catch {
-    /* ignore quota / private mode */
-  }
-}
-
-const NODE_R_DEFAULT = 8;
-const NODE_R_EDGE = 8;
-const NODE_R_ACTIVE = 9;
-
-const getNodeRadius = (isSelected: boolean, isDragging: boolean, isEdgeSelected: boolean) => {
-  if (isSelected || isDragging) return NODE_R_ACTIVE;
-  if (isEdgeSelected) return NODE_R_EDGE;
-  return NODE_R_DEFAULT;
-};
-
-const getNodeYaw = (node: GraphNode): number => node.yaw ?? 0;
-
-/** ROS yaw (rad) from SVG pixel offset (Y axis points down). */
-const yawFromPixelDelta = (dx: number, dy: number): number => Math.atan2(-dy, dx);
-
-const yawToHandlePos = (yaw: number, distance: number) => ({
-  x: distance * Math.cos(yaw),
-  y: -distance * Math.sin(yaw),
-});
-
-const radToDeg = (rad: number) => (rad * 180) / Math.PI;
-const degToRad = (deg: number) => (deg * Math.PI) / 180;
-
-function polygonCentroid(flat: number[]): { x: number; y: number } {
-  let sx = 0;
-  let sy = 0;
-  let n = 0;
-  for (let i = 0; i < flat.length; i += 2) {
-    sx += flat[i];
-    sy += flat[i + 1];
-    n += 1;
-  }
-  return n ? { x: sx / n, y: sy / n } : { x: 0, y: 0 };
-}
-
-function deriveDockingFromPolygon(points: number[]): DockPoseEdit {
-  const pts: { x: number; y: number }[] = [];
-  for (let i = 0; i < points.length; i += 2) {
-    pts.push({ x: points[i], y: points[i + 1] });
-  }
-  if (pts.length < 4) {
-    const c = polygonCentroid(points);
-    return { x: c.x, y: c.y, width: 1, height: 1, yaw: 0 };
-  }
-  const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-  const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-  const e0x = pts[1].x - pts[0].x;
-  const e0y = pts[1].y - pts[0].y;
-  const e1x = pts[2].x - pts[1].x;
-  const e1y = pts[2].y - pts[1].y;
-  const len0 = Math.hypot(e0x, e0y);
-  const len1 = Math.hypot(e1x, e1y);
-  const width = Math.max(len0, len1);
-  const height = Math.min(len0, len1);
-  const yaw = len0 >= len1 ? Math.atan2(e0y, e0x) : Math.atan2(e1y, e1x);
-  return {
-    x: parseFloat(cx.toFixed(2)),
-    y: parseFloat(cy.toFixed(2)),
-    width: parseFloat(Math.max(width, 0.1).toFixed(2)),
-    height: parseFloat(Math.max(height, 0.1).toFixed(2)),
-    yaw: parseFloat(yaw.toFixed(4)),
-  };
-}
-
-function polygonFromDockingParams(
-  x: number,
-  y: number,
-  yaw: number,
-  width: number,
-  height: number
-): number[] {
-  const hw = width / 2;
-  const hh = height / 2;
-  const cos = Math.cos(yaw);
-  const sin = Math.sin(yaw);
-  const local = [
-    { lx: -hw, ly: -hh },
-    { lx: hw, ly: -hh },
-    { lx: hw, ly: hh },
-    { lx: -hw, ly: hh },
-  ];
-  const flat: number[] = [];
-  for (const c of local) {
-    flat.push(
-      parseFloat((x + c.lx * cos - c.ly * sin).toFixed(2)),
-      parseFloat((y + c.lx * sin + c.ly * cos).toFixed(2))
-    );
-  }
-  return flat;
-}
-
-function normalizeDockingArea(d: DockingArea): Required<Pick<DockingArea, 'x' | 'y' | 'width' | 'height'>> & DockingArea {
-  if (
-    d.x !== undefined &&
-    d.y !== undefined &&
-    d.width !== undefined &&
-    d.height !== undefined
-  ) {
-    const yaw = d.yaw ?? 0;
-    return {
-      ...d,
-      x: d.x,
-      y: d.y,
-      width: d.width,
-      height: d.height,
-      yaw,
-      polygon_points: polygonFromDockingParams(d.x, d.y, yaw, d.width, d.height),
-    };
-  }
-  if (d.polygon_points?.length >= 8) {
-    const derived = deriveDockingFromPolygon(d.polygon_points);
-    return {
-      ...d,
-      ...derived,
-      polygon_points: polygonFromDockingParams(
-        derived.x,
-        derived.y,
-        derived.yaw,
-        derived.width,
-        derived.height
-      ),
-    };
-  }
-  return {
-    ...d,
-    x: d.x ?? 0,
-    y: d.y ?? 0,
-    width: d.width ?? 1,
-    height: d.height ?? 1,
-    yaw: d.yaw ?? 0,
-    polygon_points: d.polygon_points ?? [],
-  };
-}
-
-/** ROS yaw (degrees, CCW from +X) → SVG rotate. Map Y is flipped; marker front points +X. */
-const rosYawDegToSvgRotate = (yawDeg: number) => -yawDeg;
-
-/** Top-down AGV marker drawn in SVG (front = +X). */
-function renderRobotMarker(halfW: number, halfH: number, selected: boolean) {
-  const strokeW = Math.max(1.5, halfW * 0.07);
-  const bodyFill = selected ? '#1a1a1a' : '#2d2d2d';
-  const frontFill = selected ? '#3b82f6' : '#10b981';
-
-  return (
-    <g style={{ pointerEvents: 'none' }}>
-      {selected && (
-        <rect
-          x={-halfW - 4}
-          y={-halfH - 4}
-          width={halfW * 2 + 8}
-          height={halfH * 2 + 8}
-          rx={halfH * 0.45}
-          fill="none"
-          stroke="#3b82f6"
-          strokeWidth={2}
-          strokeOpacity={0.85}
-        />
-      )}
-      <ellipse
-        cx={0}
-        cy={halfH * 0.15}
-        rx={halfW * 0.85}
-        ry={halfH * 0.35}
-        fill="rgba(0,0,0,0.12)"
-      />
-      <rect
-        x={-halfW}
-        y={-halfH}
-        width={halfW * 2}
-        height={halfH * 2}
-        rx={halfH * 0.38}
-        fill={bodyFill}
-        stroke="#ffffff"
-        strokeWidth={strokeW}
-        style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.25))' }}
-      />
-      {/* Front direction wedge (+X) */}
-      <path
-        d={`M ${halfW * 0.15} 0 L ${halfW * 0.92} ${-halfH * 0.5} L ${halfW * 0.92} ${halfH * 0.5} Z`}
-        fill={frontFill}
-        stroke="#ffffff"
-        strokeWidth={strokeW * 0.6}
-      />
-      <circle cx={-halfW * 0.25} cy={0} r={halfH * 0.14} fill="rgba(255,255,255,0.35)" />
-      <circle cx={halfW * 0.1} cy={0} r={halfH * 0.14} fill="rgba(255,255,255,0.35)" />
-    </g>
-  );
-}
-
-/** Compact chevron arrow drawn inside the node circle. */
-function renderInnerNodeArrow(
-  yaw: number,
-  radius: number,
-  options: { opacity?: number; arrowColor?: string } = {}
-) {
-  const { opacity = 1, arrowColor = '#ffffff' } = options;
-  const scale = radius / NODE_R_DEFAULT;
-  const svgRotate = -radToDeg(yaw);
-
-  return (
-    <g transform={`rotate(${svgRotate})`} style={{ pointerEvents: 'none' }} opacity={opacity}>
-      <path
-        d={`M ${-0.8 * scale},${-2.8 * scale} L ${3.8 * scale},0 L ${-0.8 * scale},${2.8 * scale} Z`}
-        fill={arrowColor}
-        fillOpacity={0.95}
-      />
-      <circle cx={-1.2 * scale} cy={0} r={1.1 * scale} fill={arrowColor} fillOpacity={0.45} />
-    </g>
-  );
-}
-
-const RobotMap: React.FC<RobotMapProps> = ({ 
+const RobotMap: React.FC<RobotMapProps> = ({
   robotName,
   mapName,
   robots = [],
@@ -486,10 +188,14 @@ const RobotMap: React.FC<RobotMapProps> = ({
     const fetchMap = async () => {
       setMapLoading(true);
       try {
-        const path = mapName
-          ? `/maps/${encodeURIComponent(mapName)}`
-          : `/maps/by-robot/${encodeURIComponent(robotName!)}`;
-        const data = await apiFetch<MapData>(path);
+        const metaPath = mapName
+          ? `/maps/${encodeURIComponent(mapName)}/meta`
+          : `/maps/by-robot/${encodeURIComponent(robotName!)}/meta`;
+        const meta = await apiFetch<MapMeta>(metaPath);
+        const thumb = await apiFetch<MapThumbnail>(
+          `/maps/${encodeURIComponent(meta.map_name)}/thumbnail`,
+        );
+        const data: MapData = { ...meta, image_png_base64: thumb.image_png_base64 };
         setMapData(data);
       } catch (e) {
         setMapData(null);
@@ -607,16 +313,6 @@ const RobotMap: React.FC<RobotMapProps> = ({
       n.id === nodeId ? { ...n, yaw: parseFloat(yaw.toFixed(4)) } : n
     );
     onGraphDataChange({ ...graphData, nodes: updatedNodes });
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'active': return '#10b981';
-      case 'idle': return '#f59e0b';
-      case 'charging': return '#3b82f6';
-      case 'error': return '#ef4444';
-      default: return '#6b7280';
-    }
   };
 
   const handleZoomIn = () => {

@@ -14,4 +14,4 @@ export {
   ACTIVE_COMMAND_STATUSES,
   ACTIVE_COMMAND_STATUS_SET,
 } from './command';
-export type { MapSummary, MapDetail, MapData, MapRobotInfo } from './map';
+export type { MapSummary, MapMeta, MapThumbnail, MapDetail, MapData, MapRobotInfo } from './map';

@@ -2,13 +2,13 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import '../styles/DashboardContent.css';
 import RobotMap from './RobotMap';
 import PageToast from './PageToast';
-import robotWebSocketService from '../services/robotWebSocketService';
-import { apiFetch, apiFetchNullable, ApiError } from '../api';
+import { useRobotWebSocket } from '../contexts/RobotWebSocketContext';
+import { useActiveCommand } from '../hooks/useRobotCommands';
+import { apiFetch, ApiError } from '../api';
 import { isRobotOnline } from '../utils/robotTime';
-import type { Robot, GraphData, GraphNode, GraphRecord, RobotCommand, CommandStatus } from '../types';
+import type { Robot, GraphData, GraphNode, GraphRecord, CommandStatus } from '../types';
 import {
   COMMAND_STATUS_LABEL,
-  ACTIVE_COMMAND_STATUS_SET,
   ACTIVE_COMMAND_STATUSES,
 } from '../types';
 import type { MapSummary, MapRobotInfo, GraphListItem } from '../types';
@@ -42,8 +42,7 @@ function offlineRobot(id: string): Robot {
 }
 
 function DashboardContent() {
-  const [robots, setRobots] = useState<Robot[]>([]);
-  const [wsConnected, setWsConnected] = useState(false);
+  const { robots, isConnected, connectionError, clientLastSeen } = useRobotWebSocket();
   const [mapsLoading, setMapsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [maps, setMaps] = useState<MapSummary[]>([]);
@@ -56,13 +55,11 @@ function DashboardContent() {
   const [showGraph, setShowGraph] = useState(true);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [displayGraphName, setDisplayGraphName] = useState<string | null>(null);
-  const [activeCommand, setActiveCommand] = useState<RobotCommand | null>(null);
   const [sendRobotLoading, setSendRobotLoading] = useState(false);
   const [cancellingCommand, setCancellingCommand] = useState(false);
   const [graphLoading, setGraphLoading] = useState(false);
   const [graphLoadError, setGraphLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; variant: 'info' | 'error' | 'success' } | null>(null);
-  const [clientLastSeen, setClientLastSeen] = useState<Record<string, number>>({});
   const [onlineTick, setOnlineTick] = useState(0);
   const userPickedGraphRef = useRef(false);
 
@@ -85,6 +82,9 @@ function DashboardContent() {
   }, [robotsOnMap, mapRobots]);
 
   const effectiveRobotId = selectedRobotId ?? selectableRobots[0]?.id ?? null;
+
+  const { activeCommand, setActiveCommand, refreshActiveCommand } =
+    useActiveCommand(effectiveRobotId);
 
   const currentRobot = useMemo(() => {
     const id = effectiveRobotId;
@@ -298,40 +298,12 @@ function DashboardContent() {
     });
   }, [selectableRobots, selectedMapName]);
 
-  // Poll active robot command (pending / accepted / in_progress only)
-  useEffect(() => {
-    if (!effectiveRobotId) {
-      setActiveCommand(null);
-      return;
-    }
-
-    const fetchCommand = async () => {
-      try {
-        const cmd = await apiFetchNullable<RobotCommand>(
-          `/commands/active/${effectiveRobotId}`,
-        );
-        if (cmd && ACTIVE_COMMAND_STATUS_SET.has(cmd.status)) {
-          setActiveCommand(cmd);
-        } else {
-          setActiveCommand(null);
-        }
-      } catch {
-        /* ignore poll errors */
-      }
-    };
-
-    fetchCommand();
-    const interval = setInterval(fetchCommand, 2000);
-    return () => clearInterval(interval);
-  }, [effectiveRobotId]);
-
   // Re-check online threshold periodically (same as Robots page)
   useEffect(() => {
     const interval = setInterval(() => setOnlineTick((t) => t + 1), 5000);
     return () => clearInterval(interval);
   }, []);
 
-  // useMemo before conditional returns
   const robotsWithFullData = useMemo(
     () =>
       robotsOnMap.map((robot) => ({
@@ -344,36 +316,6 @@ function DashboardContent() {
       })),
     [robotsOnMap]
   );
-
-  // WebSocket bağlantısı ve robot verilerini alma
-  useEffect(() => {
-    const handleRobotsData = (robotsData: Robot[]) => {
-      const now = Date.now();
-      setWsConnected(true);
-
-      setClientLastSeen((prev) => {
-        const next = { ...prev };
-        robotsData.forEach((r) => {
-          next[r.id] = now;
-        });
-        return next;
-      });
-
-      setRobots(robotsData);
-      setError(null);
-    };
-
-    const handleError = (errorMessage: string) => {
-      console.error('WebSocket error:', errorMessage);
-      setError(errorMessage);
-    };
-
-    robotWebSocketService.connect(handleRobotsData, handleError);
-
-    return () => {
-      robotWebSocketService.disconnect();
-    };
-  }, []);
 
   if (mapsLoading) {
     return (
@@ -413,20 +355,6 @@ function DashboardContent() {
   const handleGraphChange = (graphId: string) => {
     userPickedGraphRef.current = true;
     setSelectedGraphId(graphId || null);
-  };
-
-  const refreshActiveCommand = async () => {
-    if (!effectiveRobotId) return;
-    try {
-      const cmd = await apiFetchNullable<RobotCommand>(
-        `/commands/active/${effectiveRobotId}`,
-      );
-      if (cmd && ACTIVE_COMMAND_STATUS_SET.has(cmd.status)) {
-        setActiveCommand(cmd);
-      } else {
-        setActiveCommand(null);
-      }
-    } catch { /* ignore */ }
   };
 
   const handleCancelCommand = async () => {
@@ -496,9 +424,15 @@ function DashboardContent() {
         onClear={() => setToast(null)}
       />
 
-      {!wsConnected && (
+      {!isConnected && !connectionError && (
         <div className="ws-connecting-banner">
           Connecting to robots… Live position may be unavailable.
+        </div>
+      )}
+
+      {connectionError && (
+        <div className="ws-connecting-banner ws-connecting-banner--error">
+          {connectionError}
         </div>
       )}
 

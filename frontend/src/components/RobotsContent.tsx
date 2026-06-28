@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import '../styles/RobotsContent.css';
 import PageToast from './PageToast';
-import robotWebSocketService from '../services/robotWebSocketService';
-import { apiFetch, apiFetchNullable, ApiError } from '../api';
+import { useRobotWebSocket } from '../contexts/RobotWebSocketContext';
+import { useLatestCommands, useRobotCommandDetail } from '../hooks/useRobotCommands';
+import { apiFetch, ApiError } from '../api';
 import { isRobotOnline } from '../utils/robotTime';
 import type {
   LiveRobot,
@@ -25,10 +27,6 @@ interface FleetRow {
   live?: LiveRobot;
   isOnline: boolean;
   latestCommand?: RobotCommand | null;
-}
-
-interface RobotsContentProps {
-  onOpenDashboard?: (mapName: string, robotName: string) => void;
 }
 
 function buildFleetRows(
@@ -56,15 +54,12 @@ function buildFleetRows(
   });
 }
 
-function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
+function RobotsContent() {
+  const navigate = useNavigate();
+  const { robots: liveRobots, clientLastSeen } = useRobotWebSocket();
   const [registered, setRegistered] = useState<RegisteredRobot[]>([]);
-  const [liveRobots, setLiveRobots] = useState<LiveRobot[]>([]);
-  const [clientLastSeen, setClientLastSeen] = useState<Record<string, number>>({});
   const [maps, setMaps] = useState<MapSummary[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(null);
-  const [latestCommands, setLatestCommands] = useState<Record<string, RobotCommand | null>>({});
-  const [activeCommand, setActiveCommand] = useState<RobotCommand | null>(null);
-  const [commandHistory, setCommandHistory] = useState<RobotCommand[]>([]);
   const [graphOptions, setGraphOptions] = useState<GraphListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -76,14 +71,21 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
   const [editMap, setEditMap] = useState('');
   const [editGraph, setEditGraph] = useState('');
 
+  const fleetNames = useMemo(() => {
+    const names = new Set<string>([
+      ...registered.map((r) => r.robot_name),
+      ...liveRobots.map((r) => r.id),
+    ]);
+    return [...names].sort();
+  }, [registered, liveRobots]);
+
+  const latestCommands = useLatestCommands(fleetNames);
+  const { activeCommand, commandHistory, refreshActiveCommand } =
+    useRobotCommandDetail(selectedName);
+
   const fleetRows = useMemo(
     () => buildFleetRows(registered, liveRobots, latestCommands, clientLastSeen),
     [registered, liveRobots, latestCommands, clientLastSeen, onlineTick]
-  );
-
-  const fleetNames = useMemo(
-    () => fleetRows.map((r) => r.robot_name),
-    [fleetRows]
   );
 
   const loadRegistered = useCallback(async () => {
@@ -110,55 +112,10 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
     return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    robotWebSocketService.connect(
-      (data) => {
-        const now = Date.now();
-        setLiveRobots(data);
-        setClientLastSeen((prev) => {
-          const next = { ...prev };
-          data.forEach((r) => {
-            next[r.id] = now;
-          });
-          return next;
-        });
-      },
-      () => { /* ignore */ }
-    );
-    return () => robotWebSocketService.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (!fleetNames.length) {
-      setLatestCommands({});
-      return;
-    }
-
-    const poll = async () => {
-      const entries = await Promise.all(
-        fleetNames.map(async (name) => {
-          try {
-            const cmd = await apiFetchNullable<RobotCommand>(`/commands/latest/${name}`);
-            return [name, cmd] as const;
-          } catch {
-            return [name, null] as const;
-          }
-        })
-      );
-      setLatestCommands(Object.fromEntries(entries));
-    };
-
-    poll();
-    const interval = setInterval(poll, 4000);
-    return () => clearInterval(interval);
-  }, [fleetNames.join(',')]);
-
   const selectedRow = fleetRows.find((r) => r.robot_name === selectedName) ?? null;
 
   useEffect(() => {
     if (!selectedName) {
-      setActiveCommand(null);
-      setCommandHistory([]);
       setGraphOptions([]);
       return;
     }
@@ -168,21 +125,6 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
       setEditMap(row.map_name !== '—' ? row.map_name : maps[0]?.map_name ?? '');
       setEditGraph(row.active_graph_name ?? '');
     }
-
-    const loadDetail = async () => {
-      try {
-        const [activeCmd, history] = await Promise.all([
-          apiFetchNullable<RobotCommand>(`/commands/active/${selectedName}`),
-          apiFetch<RobotCommand[]>(`/commands?robot_name=${encodeURIComponent(selectedName)}`),
-        ]);
-        setActiveCommand(activeCmd);
-        setCommandHistory(history);
-      } catch { /* ignore */ }
-    };
-
-    loadDetail();
-    const interval = setInterval(loadDetail, 3000);
-    return () => clearInterval(interval);
   }, [selectedName, fleetRows, maps]);
 
   useEffect(() => {
@@ -240,7 +182,7 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'cancelled' }),
       });
-      setActiveCommand(null);
+      void refreshActiveCommand();
       showToast('Command cancelled', 'success');
     } catch (e) {
       showToast(e instanceof ApiError ? e.message : 'Failed to cancel command', 'error');
@@ -253,7 +195,7 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
     if (!selectedRow || selectedRow.map_name === '—') return;
     localStorage.setItem(MAP_STORAGE_KEY, selectedRow.map_name);
     localStorage.setItem(ROBOT_STORAGE_KEY, selectedRow.robot_name);
-    onOpenDashboard?.(selectedRow.map_name, selectedRow.robot_name);
+    navigate('/dashboard');
   };
 
   if (loading) {

@@ -11,18 +11,19 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 24px;
-  min-height: 56px;
+  padding: 8px 16px;
+  min-height: 48px;
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
   box-shadow: var(--shadow-sm);
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.header-left {
+.dashboard-header .header-left {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 20px;
   min-width: 0;
 }
 
@@ -191,6 +192,12 @@
 .command-cancel-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.ws-connecting-banner--error {
+  background: #fef2f2;
+  border-bottom-color: #fecaca;
+  color: #b91c1c;
 }
 
 /* Status Indicators */
@@ -529,7 +536,7 @@
     align-items: stretch;
   }
 
-  .header-left {
+  .dashboard-header .header-left {
     flex-direction: column;
     align-items: stretch;
     gap: 10px;

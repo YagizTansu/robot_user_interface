@@ -1,26 +1,25 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import '../styles/MapsContent.css';
 import PageToast from './PageToast';
 import { apiFetch, ApiError } from '../api';
-import type { MapSummary, MapDetail, RegisteredRobot, GraphMeta } from '../types';
+import type { MapSummary, MapMeta, MapThumbnail, RegisteredRobot, GraphMeta } from '../types';
 
 const GRAPH_EDITOR_MAP_KEY = 'graph_editor_selected_map';
-
-interface MapsContentProps {
-  onOpenDashboard?: (mapName: string) => void;
-  onOpenGraphEditor?: (mapName: string) => void;
-}
+const DASHBOARD_MAP_KEY = 'dashboard_selected_map';
 
 function formatMeters(px: number, resolution: number) {
   return (px * resolution).toFixed(2);
 }
 
-function MapsContent({ onOpenDashboard, onOpenGraphEditor }: MapsContentProps) {
+function MapsContent() {
+  const navigate = useNavigate();
   const [maps, setMaps] = useState<MapSummary[]>([]);
   const [robotCounts, setRobotCounts] = useState<Record<string, number>>({});
   const [graphCounts, setGraphCounts] = useState<Record<string, number>>({});
   const [selectedName, setSelectedName] = useState<string | null>(null);
-  const [detail, setDetail] = useState<MapDetail | null>(null);
+  const [detail, setDetail] = useState<MapMeta | null>(null);
+  const [thumbnail, setThumbnail] = useState<string | null>(null);
   const [robots, setRobots] = useState<RegisteredRobot[]>([]);
   const [graphs, setGraphs] = useState<GraphMeta[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,6 +76,7 @@ function MapsContent({ onOpenDashboard, onOpenGraphEditor }: MapsContentProps) {
   useEffect(() => {
     if (!selectedName) {
       setDetail(null);
+      setThumbnail(null);
       setRobots([]);
       setGraphs([]);
       setDetailError(null);
@@ -87,17 +87,20 @@ function MapsContent({ onOpenDashboard, onOpenGraphEditor }: MapsContentProps) {
       setDetailLoading(true);
       setDetailError(null);
       try {
-        const [mapDetail, mapRobots, mapGraphs] = await Promise.all([
-          apiFetch<MapDetail>(`/maps/${encodeURIComponent(selectedName)}`),
+        const [mapMeta, mapThumb, mapRobots, mapGraphs] = await Promise.all([
+          apiFetch<MapMeta>(`/maps/${encodeURIComponent(selectedName)}/meta`),
+          apiFetch<MapThumbnail>(`/maps/${encodeURIComponent(selectedName)}/thumbnail`),
           apiFetch<RegisteredRobot[]>(`/maps/${encodeURIComponent(selectedName)}/robots`),
           apiFetch<GraphMeta[]>(`/graphs?map_name=${encodeURIComponent(selectedName)}`),
         ]);
 
-        setDetail(mapDetail);
+        setDetail(mapMeta);
+        setThumbnail(mapThumb.image_png_base64);
         setRobots(mapRobots);
         setGraphs(mapGraphs);
       } catch (e) {
         setDetail(null);
+        setThumbnail(null);
         setRobots([]);
         setGraphs([]);
         setDetailError(e instanceof ApiError ? e.message : 'Failed to load map details');
@@ -116,12 +119,13 @@ function MapsContent({ onOpenDashboard, onOpenGraphEditor }: MapsContentProps) {
   }, [maps.length, robotCounts, graphCounts]);
 
   const openDashboard = (mapName: string) => {
-    onOpenDashboard?.(mapName);
+    localStorage.setItem(DASHBOARD_MAP_KEY, mapName);
+    navigate('/dashboard');
   };
 
   const openGraphEditor = (mapName: string) => {
     localStorage.setItem(GRAPH_EDITOR_MAP_KEY, mapName);
-    onOpenGraphEditor?.(mapName);
+    navigate('/graph-editor');
   };
 
   const handleRefresh = async () => {
@@ -225,10 +229,10 @@ function MapsContent({ onOpenDashboard, onOpenGraphEditor }: MapsContentProps) {
               <>
                 <h2 className="maps-detail-title">{selectedName}</h2>
 
-                {detail?.image_png_base64 && (
+                {thumbnail && (
                   <div className="maps-preview">
                     <img
-                      src={`data:image/png;base64,${detail.image_png_base64}`}
+                      src={`data:image/png;base64,${thumbnail}`}
                       alt={selectedName}
                     />
                   </div>

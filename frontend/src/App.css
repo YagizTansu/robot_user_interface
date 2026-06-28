@@ -67,3 +67,20 @@ body {
     margin-left: 0;
   }
 }
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    border: none;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+  }
+}

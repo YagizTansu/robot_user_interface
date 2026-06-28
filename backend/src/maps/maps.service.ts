@@ -49,4 +49,36 @@ export class MapsService {
     }
     return mapRecord;
   }
+
+  async findMetaByMapName(
+    mapName: string,
+  ): Promise<Omit<MapRecord, 'image_png_base64'>> {
+    const mapRecord = await this.mapModel
+      .findOne({ map_name: mapName }, { image_png_base64: 0 })
+      .exec();
+    if (!mapRecord) {
+      throw new NotFoundException(`No map found for map_name: ${mapName}`);
+    }
+    return mapRecord;
+  }
+
+  async findThumbnailByMapName(
+    mapName: string,
+  ): Promise<Pick<MapRecord, 'map_name' | 'image_png_base64'>> {
+    const mapRecord = await this.mapModel
+      .findOne({ map_name: mapName }, { map_name: 1, image_png_base64: 1 })
+      .exec();
+    if (!mapRecord) {
+      throw new NotFoundException(`No map found for map_name: ${mapName}`);
+    }
+    return mapRecord;
+  }
+
+  async findMetaByRobotName(robotName: string): Promise<Omit<MapRecord, 'image_png_base64'>> {
+    const robotInfo = await this.robotInfoModel.findOne({ robot_name: robotName }).exec();
+    if (!robotInfo) {
+      throw new NotFoundException(`No robots_info entry found for robot: ${robotName}`);
+    }
+    return this.findMetaByMapName(robotInfo.map_name);
+  }
 }
