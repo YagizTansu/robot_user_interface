@@ -14,12 +14,10 @@
   color: var(--color-text-muted);
 }
 
-.maps-header {
+.maps-toolbar {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 20px;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 
 .maps-btn--refresh {
@@ -44,19 +42,6 @@
   color: #b91c1c;
   font-size: var(--font-size-sm);
   font-weight: 500;
-}
-
-.maps-title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--color-text);
-}
-
-.maps-subtitle {
-  margin: 4px 0 0;
-  font-size: var(--font-size-md);
-  color: var(--color-text-muted);
 }
 
 .maps-stats {

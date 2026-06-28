@@ -214,13 +214,6 @@ function RobotsContent() {
         onClear={() => setToast(null)}
       />
 
-      <header className="robots-header">
-        <div>
-          <h1 className="robots-title">Robots</h1>
-          <p className="robots-subtitle">Live fleet status and configuration</p>
-        </div>
-      </header>
-
       {loadError && (
         <div className="robots-banner robots-banner--error">{loadError}</div>
       )}

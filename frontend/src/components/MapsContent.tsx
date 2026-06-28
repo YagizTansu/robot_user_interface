@@ -151,15 +151,11 @@ function MapsContent() {
         onClear={() => setToast(null)}
       />
 
-      <header className="maps-header">
-        <div>
-          <h1 className="maps-title">Maps</h1>
-          <p className="maps-subtitle">Browse floor maps, assigned robots, and navigation graphs</p>
-        </div>
+      <div className="maps-toolbar">
         <button type="button" className="maps-btn maps-btn--refresh" onClick={() => void handleRefresh()}>
           Refresh
         </button>
-      </header>
+      </div>
 
       {loadError && (
         <div className="maps-banner maps-banner--error">{loadError}</div>

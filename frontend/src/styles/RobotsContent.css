@@ -13,27 +13,6 @@
   color: var(--color-text-muted);
 }
 
-.robots-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 20px;
-  gap: 16px;
-}
-
-.robots-title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--color-text);
-}
-
-.robots-subtitle {
-  margin: 4px 0 0;
-  font-size: var(--font-size-md);
-  color: var(--color-text-muted);
-}
-
 .robots-banner {
   margin-bottom: 16px;
   padding: 10px 14px;

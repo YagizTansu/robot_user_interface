@@ -397,11 +397,6 @@ function GraphEditor() {
     <main className="graph-editor-layout">
       {/* Left panel */}
       <aside className="graph-editor-panel">
-        <div className="panel-header">
-          <h2>Graph Editor</h2>
-          <p className="panel-header-sub">Manage navigation graphs</p>
-        </div>
-
         {initLoading && (
           <div className="graph-editor-banner graph-editor-banner--loading">Loading maps…</div>
         )}
