@@ -5,7 +5,7 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { RobotPose, RobotPoseDocument } from '../robots/schemas/robot.schema';
@@ -18,11 +18,13 @@ import { RobotsService } from '../robots/robots.service';
 @Injectable()
 @WebSocketGateway({
   cors: {
-    origin: true, // Yerel ağdaki tüm cihazlardan erişime izin ver
+    origin: true,
     credentials: true,
   },
 })
 export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  private readonly logger = new Logger(RobotsGateway.name);
+
   @WebSocketServer()
   server: Server;
 
@@ -51,14 +53,12 @@ export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   handleConnection(client: Socket) {
-    console.log(`Client connected: ${client.id}`);
-    
-    // Yeni bağlanan istemciye mevcut robot verilerini gönder
+    this.logger.debug(`Client connected: ${client.id}`);
     this.sendCurrentRobotData(client);
   }
 
   handleDisconnect(client: Socket) {
-    console.log(`Client disconnected: ${client.id}`);
+    this.logger.debug(`Client disconnected: ${client.id}`);
   }
 
   private async sendCurrentRobotData(client: Socket) {
@@ -66,52 +66,36 @@ export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const robots = await this.robotsService.findAll();
       client.emit('robots-data', robots);
     } catch (error) {
-      console.error('Error sending current robot data:', error);
+      this.logger.error('Error sending current robot data', error);
       client.emit('robots-error', { message: 'Failed to fetch robot data' });
     }
   }
 
   private initChangeStreams() {
     try {
-      // MongoDB Change Streams'i robots_pose koleksiyonu için başlat
       this.changeStream = this.robotPoseModel.watch([], {
         fullDocument: 'updateLookup',
       });
 
-      this.changeStream.on('change', async (change) => {
-        console.log('Robot pose collection change detected:', change.operationType);
-        
+      this.changeStream.on('change', async () => {
         try {
-          // Her değişiklikte güncel tüm robot verilerini gönder
           const robots = await this.robotsService.findAll();
           this.server.emit('robots-data', robots);
-          
-          // Ayrıca spesifik değişiklik tipini de bildir
-          this.server.emit('robots-change', {
-            operationType: change.operationType,
-            documentKey: change.documentKey,
-            fullDocument: change.fullDocument
-          });
         } catch (error) {
-          console.error('Error handling change stream event:', error);
+          this.logger.error('Error handling robot pose change', error);
           this.server.emit('robots-error', { message: 'Failed to process robot data change' });
         }
       });
 
-      this.changeStream.on('error', (error) => {
-        console.error('Change stream error:', error);
+      this.changeStream.on('error', (error: Error) => {
+        this.logger.error('Robot pose change stream error', error);
         this.server.emit('robots-error', { message: 'Real-time connection error' });
-        
-        // Hata durumunda change stream'i yeniden başlat
-        setTimeout(() => {
-          console.log('Attempting to restart change stream...');
-          this.initChangeStreams();
-        }, 5000);
+        setTimeout(() => this.initChangeStreams(), 5000);
       });
 
-      console.log('MongoDB Change Streams initialized for robots_pose collection');
+      this.logger.log('Change stream active: robots_pose');
     } catch (error) {
-      console.error('Error initializing change streams:', error);
+      this.logger.error('Error initializing robot pose change stream', error);
     }
   }
 
@@ -128,16 +112,13 @@ export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       this.commandChangeStream.on('error', (error: Error) => {
-        console.error('Command change stream error:', error);
-        setTimeout(() => {
-          console.log('Attempting to restart command change stream...');
-          this.initCommandChangeStream();
-        }, 5000);
+        this.logger.error('Command change stream error', error);
+        setTimeout(() => this.initCommandChangeStream(), 5000);
       });
 
-      console.log('MongoDB Change Streams initialized for robot_commands collection');
+      this.logger.log('Change stream active: robot_commands');
     } catch (error) {
-      console.error('Error initializing command change streams:', error);
+      this.logger.error('Error initializing command change stream', error);
     }
   }
 
@@ -149,13 +130,12 @@ export class RobotsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     };
   }
 
-  // Manuel olarak robot verilerini yayınlamak için kullanılabilir
   async broadcastRobotData() {
     try {
       const robots = await this.robotsService.findAll();
       this.server.emit('robots-data', robots);
     } catch (error) {
-      console.error('Error broadcasting robot data:', error);
+      this.logger.error('Error broadcasting robot data', error);
       this.server.emit('robots-error', { message: 'Failed to broadcast robot data' });
     }
   }

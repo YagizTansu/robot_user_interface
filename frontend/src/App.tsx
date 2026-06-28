@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import './App.css';
 import Sidebar from './components/Sidebar';
@@ -8,6 +8,11 @@ import GraphEditor from './components/GraphEditor';
 import RobotsContent from './components/RobotsContent';
 import MapsContent from './components/MapsContent';
 import { RobotWebSocketProvider } from './contexts/RobotWebSocketContext';
+import ErrorBoundary from './components/ErrorBoundary';
+
+function RoutedPage({ label, children }: { label: string; children: ReactNode }) {
+  return <ErrorBoundary label={label}>{children}</ErrorBoundary>;
+}
 
 function AppLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -41,10 +46,10 @@ function AppLayout() {
 
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<DashboardContent />} />
-          <Route path="/graph-editor" element={<GraphEditor />} />
-          <Route path="/robots" element={<RobotsContent />} />
-          <Route path="/maps" element={<MapsContent />} />
+          <Route path="/dashboard" element={<RoutedPage label="Dashboard"><DashboardContent /></RoutedPage>} />
+          <Route path="/graph-editor" element={<RoutedPage label="Graph Editor"><GraphEditor /></RoutedPage>} />
+          <Route path="/robots" element={<RoutedPage label="Robots"><RobotsContent /></RoutedPage>} />
+          <Route path="/maps" element={<RoutedPage label="Maps"><MapsContent /></RoutedPage>} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </div>

@@ -104,6 +104,21 @@ Open the URL shown by Vite (typically `http://localhost:5173`).
 - NestJS resources: `npx nest g resource <name>` (inside `backend/`)
 - Format backend: `npm run format` (inside `backend/`)
 - Frontend build: `npm run build` (inside `frontend/`)
+- Backend tests: `npm test` (inside `backend/`)
+
+### Deploy / restart
+
+After pulling backend changes or editing API routes, rebuild and restart the NestJS process:
+
+```bash
+cd backend
+npm run build
+npm run start:dev   # or restart your production process
+```
+
+If the frontend calls new endpoints (e.g. `/maps/:name/meta`) but the running backend is old, those requests return **404**. Restarting with a fresh build fixes it.
+
+The frontend only needs `npm run build` when deploying static assets; `npm run dev` picks up changes automatically.
 
 ## Related systems
 

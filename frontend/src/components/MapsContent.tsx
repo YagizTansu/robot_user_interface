@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import '../styles/MapsContent.css';
 import PageToast from './PageToast';
 import { apiFetch, ApiError } from '../api';
-import type { MapSummary, MapMeta, MapThumbnail, RegisteredRobot, GraphMeta } from '../types';
+import { fetchMapDetail } from '../api/mapLoad';
+import type { MapSummary, MapMeta, RegisteredRobot, GraphMeta } from '../types';
 
 const GRAPH_EDITOR_MAP_KEY = 'graph_editor_selected_map';
 const DASHBOARD_MAP_KEY = 'dashboard_selected_map';
@@ -87,15 +88,14 @@ function MapsContent() {
       setDetailLoading(true);
       setDetailError(null);
       try {
-        const [mapMeta, mapThumb, mapRobots, mapGraphs] = await Promise.all([
-          apiFetch<MapMeta>(`/maps/${encodeURIComponent(selectedName)}/meta`),
-          apiFetch<MapThumbnail>(`/maps/${encodeURIComponent(selectedName)}/thumbnail`),
+        const { meta, thumbnail: thumb } = await fetchMapDetail(selectedName);
+
+        setDetail(meta);
+        setThumbnail(thumb);
+        const [mapRobots, mapGraphs] = await Promise.all([
           apiFetch<RegisteredRobot[]>(`/maps/${encodeURIComponent(selectedName)}/robots`),
           apiFetch<GraphMeta[]>(`/graphs?map_name=${encodeURIComponent(selectedName)}`),
         ]);
-
-        setDetail(mapMeta);
-        setThumbnail(mapThumb.image_png_base64);
         setRobots(mapRobots);
         setGraphs(mapGraphs);
       } catch (e) {

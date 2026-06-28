@@ -120,10 +120,6 @@ function DashboardContent() {
     return mapRobots.find((r) => r.robot_name === effectiveRobotId)?.active_graph_name ?? null;
   }, [effectiveRobotId, mapRobots]);
 
-  const isDisplayedGraphRobotActive = Boolean(
-    displayGraphName && robotActiveGraphName && displayGraphName === robotActiveGraphName
-  );
-
   const showToast = useCallback((message: string, variant: 'info' | 'error' | 'success' = 'info') => {
     setToast({ message, variant });
   }, []);
@@ -495,19 +491,6 @@ function DashboardContent() {
             </select>
           </div>
 
-          {displayGraphName && (
-            <span className={`graph-pill ${isDisplayedGraphRobotActive ? 'active' : ''}`}>
-              {displayGraphName}
-              {isDisplayedGraphRobotActive ? ' · robot active' : ''}
-            </span>
-          )}
-
-          <div className="status-indicators">
-            <div className="status-item">
-              <div className={`status-dot ${currentRobotIsOnline ? 'online' : 'offline'}`}></div>
-              <span className="status-text">{currentRobotIsOnline ? 'Online' : 'Offline'}</span>
-            </div>
-          </div>
         </div>
 
         <div className="header-controls">
