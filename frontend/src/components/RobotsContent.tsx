@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import '../styles/RobotsContent.css';
+import PageToast from './PageToast';
 import robotWebSocketService from '../services/robotWebSocketService';
-import { BACKEND_URL } from '../config';
+import { apiFetch, apiFetchNullable, ApiError } from '../api';
 import { isRobotOnline } from '../utils/robotTime';
 import type {
   LiveRobot,
@@ -66,9 +67,10 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
   const [commandHistory, setCommandHistory] = useState<RobotCommand[]>([]);
   const [graphOptions, setGraphOptions] = useState<GraphListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; variant: 'info' | 'error' | 'success' } | null>(null);
   const [onlineTick, setOnlineTick] = useState(0);
 
   const [editMap, setEditMap] = useState('');
@@ -85,17 +87,22 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
   );
 
   const loadRegistered = useCallback(async () => {
-    const res = await fetch(`${BACKEND_URL}/robots-info`);
-    if (res.ok) setRegistered(await res.json());
+    const data = await apiFetch<RegisteredRobot[]>('/robots-info');
+    setRegistered(data);
   }, []);
 
   const loadMaps = useCallback(async () => {
-    const res = await fetch(`${BACKEND_URL}/maps`);
-    if (res.ok) setMaps(await res.json());
+    const data = await apiFetch<MapSummary[]>('/maps');
+    setMaps(data);
   }, []);
 
   useEffect(() => {
-    Promise.all([loadRegistered(), loadMaps()]).finally(() => setLoading(false));
+    setLoadError(null);
+    Promise.all([loadRegistered(), loadMaps()])
+      .catch((e) => {
+        setLoadError(e instanceof ApiError ? e.message : 'Failed to load fleet data');
+      })
+      .finally(() => setLoading(false));
   }, [loadRegistered, loadMaps]);
 
   useEffect(() => {
@@ -131,10 +138,8 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
       const entries = await Promise.all(
         fleetNames.map(async (name) => {
           try {
-            const res = await fetch(`${BACKEND_URL}/commands/latest/${name}`);
-            if (!res.ok) return [name, null] as const;
-            const text = await res.text();
-            return [name, text ? JSON.parse(text) : null] as const;
+            const cmd = await apiFetchNullable<RobotCommand>(`/commands/latest/${name}`);
+            return [name, cmd] as const;
           } catch {
             return [name, null] as const;
           }
@@ -166,15 +171,12 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
 
     const loadDetail = async () => {
       try {
-        const [activeRes, histRes] = await Promise.all([
-          fetch(`${BACKEND_URL}/commands/active/${selectedName}`),
-          fetch(`${BACKEND_URL}/commands?robot_name=${encodeURIComponent(selectedName)}`),
+        const [activeCmd, history] = await Promise.all([
+          apiFetchNullable<RobotCommand>(`/commands/active/${selectedName}`),
+          apiFetch<RobotCommand[]>(`/commands?robot_name=${encodeURIComponent(selectedName)}`),
         ]);
-        if (activeRes.ok) {
-          const text = await activeRes.text();
-          setActiveCommand(text ? JSON.parse(text) : null);
-        }
-        if (histRes.ok) setCommandHistory(await histRes.json());
+        setActiveCommand(activeCmd);
+        setCommandHistory(history);
       } catch { /* ignore */ }
     };
 
@@ -188,8 +190,7 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
       setGraphOptions([]);
       return;
     }
-    fetch(`${BACKEND_URL}/graphs?map_name=${encodeURIComponent(editMap)}`)
-      .then((r) => (r.ok ? r.json() : []))
+    apiFetch<GraphListItem[]>(`/graphs?map_name=${encodeURIComponent(editMap)}`)
       .then(setGraphOptions)
       .catch(() => setGraphOptions([]));
   }, [editMap]);
@@ -205,31 +206,26 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
     return { total: fleetRows.length, online, busy, mapCount };
   }, [fleetRows]);
 
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3000);
+  const showToast = (msg: string, variant: 'info' | 'error' | 'success' = 'info') => {
+    setToast({ message: msg, variant });
   };
 
   const handleSaveConfig = async () => {
     if (!selectedName || !editMap) return;
     setSaving(true);
     try {
-      const res = await fetch(
-        `${BACKEND_URL}/robots-info/${encodeURIComponent(selectedName)}`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            map_name: editMap,
-            active_graph_name: editGraph || null,
-          }),
-        }
-      );
-      if (!res.ok) throw new Error('Save failed');
+      await apiFetch(`/robots-info/${encodeURIComponent(selectedName)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          map_name: editMap,
+          active_graph_name: editGraph || null,
+        }),
+      });
       await loadRegistered();
-      showToast('Configuration saved');
-    } catch {
-      showToast('Failed to save configuration');
+      showToast('Configuration saved', 'success');
+    } catch (e) {
+      showToast(e instanceof ApiError ? e.message : 'Failed to save configuration', 'error');
     } finally {
       setSaving(false);
     }
@@ -239,19 +235,15 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
     if (!activeCommand) return;
     setCancelling(true);
     try {
-      const res = await fetch(
-        `${BACKEND_URL}/commands/${activeCommand._id}/status`,
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'cancelled' }),
-        }
-      );
-      if (!res.ok) throw new Error('Cancel failed');
+      await apiFetch(`/commands/${activeCommand._id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'cancelled' }),
+      });
       setActiveCommand(null);
-      showToast('Command cancelled');
-    } catch {
-      showToast('Failed to cancel command');
+      showToast('Command cancelled', 'success');
+    } catch (e) {
+      showToast(e instanceof ApiError ? e.message : 'Failed to cancel command', 'error');
     } finally {
       setCancelling(false);
     }
@@ -274,17 +266,22 @@ function RobotsContent({ onOpenDashboard }: RobotsContentProps) {
 
   return (
     <main className="main-content robots-page">
+      <PageToast
+        message={toast?.message ?? null}
+        variant={toast?.variant}
+        onClear={() => setToast(null)}
+      />
+
       <header className="robots-header">
         <div>
           <h1 className="robots-title">Robots</h1>
           <p className="robots-subtitle">Live fleet status and configuration</p>
         </div>
-        {toast && (
-          <div className="robots-header-actions">
-            <span className="robots-toast">{toast}</span>
-          </div>
-        )}
       </header>
+
+      {loadError && (
+        <div className="robots-banner robots-banner--error">{loadError}</div>
+      )}
 
       <div className="robots-stats">
         <div className="robots-stat">

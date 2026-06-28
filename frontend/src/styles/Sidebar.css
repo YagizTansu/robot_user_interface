@@ -117,6 +117,19 @@
   color: #ffffff;
 }
 
+.nav-item--disabled,
+.nav-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nav-item--disabled:hover,
+.nav-item:disabled:hover {
+  background: transparent;
+  color: #6b7280;
+  transform: none;
+}
+
 .nav-icon {
   display: flex;
   align-items: center;

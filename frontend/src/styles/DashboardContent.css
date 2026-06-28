@@ -137,6 +137,62 @@
   color: #047857;
 }
 
+.dashboard-banner {
+  padding: 8px 24px;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.dashboard-banner--error {
+  background: #fef2f2;
+  border-bottom: 1px solid #fecaca;
+  color: #b91c1c;
+}
+
+.map-wrapper--dashboard {
+  position: relative;
+}
+
+.map-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.72);
+  z-index: 20;
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.command-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.command-cancel-btn {
+  padding: 4px 12px;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: #b91c1c;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.command-cancel-btn:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+.command-cancel-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* Status Indicators */
 .status-indicators {
   display: flex;

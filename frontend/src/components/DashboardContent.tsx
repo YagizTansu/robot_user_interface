@@ -1,13 +1,15 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import '../styles/DashboardContent.css';
 import RobotMap from './RobotMap';
+import PageToast from './PageToast';
 import robotWebSocketService from '../services/robotWebSocketService';
-import { BACKEND_URL } from '../config';
+import { apiFetch, apiFetchNullable, ApiError } from '../api';
 import { isRobotOnline } from '../utils/robotTime';
-import type { Robot, GraphData, GraphNode, RobotCommand, CommandStatus } from '../types';
+import type { Robot, GraphData, GraphNode, GraphRecord, RobotCommand, CommandStatus } from '../types';
 import {
   COMMAND_STATUS_LABEL,
   ACTIVE_COMMAND_STATUS_SET,
+  ACTIVE_COMMAND_STATUSES,
 } from '../types';
 import type { MapSummary, MapRobotInfo, GraphListItem } from '../types';
 
@@ -56,7 +58,10 @@ function DashboardContent() {
   const [displayGraphName, setDisplayGraphName] = useState<string | null>(null);
   const [activeCommand, setActiveCommand] = useState<RobotCommand | null>(null);
   const [sendRobotLoading, setSendRobotLoading] = useState(false);
-  const [commandToast, setCommandToast] = useState<string | null>(null);
+  const [cancellingCommand, setCancellingCommand] = useState(false);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [graphLoadError, setGraphLoadError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; variant: 'info' | 'error' | 'success' } | null>(null);
   const [clientLastSeen, setClientLastSeen] = useState<Record<string, number>>({});
   const [onlineTick, setOnlineTick] = useState(0);
   const userPickedGraphRef = useRef(false);
@@ -119,13 +124,22 @@ function DashboardContent() {
     displayGraphName && robotActiveGraphName && displayGraphName === robotActiveGraphName
   );
 
+  const showToast = useCallback((message: string, variant: 'info' | 'error' | 'success' = 'info') => {
+    setToast({ message, variant });
+  }, []);
+
+  const handleMapNotify = useCallback(
+    (message: string, variant: 'info' | 'error' | 'success' = 'info') => {
+      showToast(message, variant);
+    },
+    [showToast],
+  );
+
   // Load available maps
   useEffect(() => {
     const loadMaps = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/maps`);
-        if (!res.ok) throw new Error('Failed to load maps');
-        const data: MapSummary[] = await res.json();
+        const data = await apiFetch<MapSummary[]>('/maps');
         setMaps(data);
 
         if (data.length > 0) {
@@ -134,13 +148,13 @@ function DashboardContent() {
           setSelectedMapName(validStored ? stored : data[0].map_name);
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to load maps');
+        setError(e instanceof ApiError ? e.message : 'Failed to load maps');
       } finally {
         setMapsLoading(false);
       }
     };
 
-    loadMaps();
+    void loadMaps();
   }, []);
 
   // Load robots registered on the selected map
@@ -154,19 +168,14 @@ function DashboardContent() {
 
     const loadMapRobots = async () => {
       try {
-        const res = await fetch(
-          `${BACKEND_URL}/maps/${encodeURIComponent(selectedMapName)}/robots`
+        const data = await apiFetch<MapRobotInfo[]>(
+          `/maps/${encodeURIComponent(selectedMapName)}/robots`,
         );
-        if (res.ok) {
-          const data = await res.json();
-          setMapRobots(data);
-          const storedRobot = localStorage.getItem(ROBOT_STORAGE_KEY);
-          if (storedRobot && data.some((r: MapRobotInfo) => r.robot_name === storedRobot)) {
-            setSelectedRobotId(storedRobot);
-            localStorage.removeItem(ROBOT_STORAGE_KEY);
-          }
-        } else {
-          setMapRobots([]);
+        setMapRobots(data);
+        const storedRobot = localStorage.getItem(ROBOT_STORAGE_KEY);
+        if (storedRobot && data.some((r) => r.robot_name === storedRobot)) {
+          setSelectedRobotId(storedRobot);
+          localStorage.removeItem(ROBOT_STORAGE_KEY);
         }
       } catch {
         setMapRobots([]);
@@ -188,16 +197,9 @@ function DashboardContent() {
 
     const loadGraphList = async () => {
       try {
-        const listRes = await fetch(
-          `${BACKEND_URL}/graphs?map_name=${encodeURIComponent(selectedMapName)}`
+        const list = await apiFetch<GraphListItem[]>(
+          `/graphs?map_name=${encodeURIComponent(selectedMapName)}`,
         );
-        if (!listRes.ok) {
-          setGraphList([]);
-          setSelectedGraphId(null);
-          return;
-        }
-
-        const list: GraphListItem[] = await listRes.json();
         setGraphList(list);
 
         if (!list.length) {
@@ -242,38 +244,46 @@ function DashboardContent() {
     if (!selectedGraphId) {
       setGraphData({ nodes: [], edges: [] });
       setDisplayGraphName(null);
+      setGraphLoadError(null);
+      setGraphLoading(false);
       return;
     }
 
+    let cancelled = false;
     const loadGraph = async () => {
+      setGraphLoading(true);
+      setGraphLoadError(null);
       try {
-        const res = await fetch(`${BACKEND_URL}/graphs/${selectedGraphId}`);
-        if (res.ok) {
-          const full = await res.json();
-          const g = full.graph ?? { nodes: [], edges: [] };
-          setGraphData({
-            nodes: g.nodes ?? [],
-            edges: g.edges ?? [],
-            docking_areas: g.docking_areas ?? [],
-          });
-          setDisplayGraphName(full.graph_name ?? null);
-          if (selectedMapName) {
-            localStorage.setItem(
-              `${GRAPH_STORAGE_KEY_PREFIX}${selectedMapName}`,
-              selectedGraphId
-            );
-          }
-        } else {
+        const full = await apiFetch<GraphRecord>(`/graphs/${selectedGraphId}`);
+        if (cancelled) return;
+        const g = full.graph ?? { nodes: [], edges: [] };
+        setGraphData({
+          nodes: g.nodes ?? [],
+          edges: g.edges ?? [],
+          docking_areas: g.docking_areas ?? [],
+        });
+        setDisplayGraphName(full.graph_name ?? null);
+        if (selectedMapName) {
+          localStorage.setItem(
+            `${GRAPH_STORAGE_KEY_PREFIX}${selectedMapName}`,
+            selectedGraphId
+          );
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setGraphLoadError(e instanceof ApiError ? e.message : 'Failed to load graph');
           setGraphData({ nodes: [], edges: [] });
           setDisplayGraphName(null);
         }
-      } catch {
-        setGraphData({ nodes: [], edges: [] });
-        setDisplayGraphName(null);
+      } finally {
+        if (!cancelled) setGraphLoading(false);
       }
     };
 
-    loadGraph();
+    void loadGraph();
+    return () => {
+      cancelled = true;
+    };
   }, [selectedGraphId, selectedMapName]);
 
   // Keep selected robot id in sync with map filter
@@ -297,15 +307,13 @@ function DashboardContent() {
 
     const fetchCommand = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/commands/active/${effectiveRobotId}`);
-        if (res.ok) {
-          const text = await res.text();
-          const cmd: RobotCommand | null = text ? JSON.parse(text) : null;
-          if (cmd && ACTIVE_COMMAND_STATUS_SET.has(cmd.status)) {
-            setActiveCommand(cmd);
-          } else {
-            setActiveCommand(null);
-          }
+        const cmd = await apiFetchNullable<RobotCommand>(
+          `/commands/active/${effectiveRobotId}`,
+        );
+        if (cmd && ACTIVE_COMMAND_STATUS_SET.has(cmd.status)) {
+          setActiveCommand(cmd);
+        } else {
+          setActiveCommand(null);
         }
       } catch {
         /* ignore poll errors */
@@ -410,24 +418,39 @@ function DashboardContent() {
   const refreshActiveCommand = async () => {
     if (!effectiveRobotId) return;
     try {
-      const res = await fetch(`${BACKEND_URL}/commands/active/${effectiveRobotId}`);
-      if (res.ok) {
-        const text = await res.text();
-        const cmd: RobotCommand | null = text ? JSON.parse(text) : null;
-        if (cmd && ACTIVE_COMMAND_STATUS_SET.has(cmd.status)) {
-          setActiveCommand(cmd);
-        } else {
-          setActiveCommand(null);
-        }
+      const cmd = await apiFetchNullable<RobotCommand>(
+        `/commands/active/${effectiveRobotId}`,
+      );
+      if (cmd && ACTIVE_COMMAND_STATUS_SET.has(cmd.status)) {
+        setActiveCommand(cmd);
+      } else {
+        setActiveCommand(null);
       }
     } catch { /* ignore */ }
   };
 
+  const handleCancelCommand = async () => {
+    if (!activeCommand) return;
+    setCancellingCommand(true);
+    try {
+      await apiFetch(`/commands/${activeCommand._id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'cancelled' }),
+      });
+      setActiveCommand(null);
+      showToast('Command cancelled', 'success');
+    } catch (e) {
+      showToast(e instanceof ApiError ? e.message : 'Failed to cancel command', 'error');
+    } finally {
+      setCancellingCommand(false);
+    }
+  };
+
   const handleSendRobotToNode = async (node: GraphNode) => {
     setSendRobotLoading(true);
-    setCommandToast(null);
     try {
-      const res = await fetch(`${BACKEND_URL}/commands/navigate`, {
+      await apiFetch('/commands/navigate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -444,22 +467,10 @@ function DashboardContent() {
         }),
       });
 
-      if (res.status === 409) {
-        const err = await res.json();
-        setCommandToast(err.message || 'Robot is busy');
-        return;
-      }
-
-      if (!res.ok) {
-        setCommandToast('Failed to send robot');
-        return;
-      }
-
-      setCommandToast(`Command sent to ${node.description || node.id}`);
+      showToast(`Command sent to ${node.description || node.id}`, 'success');
       await refreshActiveCommand();
-      setTimeout(() => setCommandToast(null), 3000);
-    } catch {
-      setCommandToast('Failed to send robot');
+    } catch (e) {
+      showToast(e instanceof ApiError ? e.message : 'Failed to send robot', 'error');
     } finally {
       setSendRobotLoading(false);
     }
@@ -479,6 +490,12 @@ function DashboardContent() {
 
   return (
     <main className="main-content">
+      <PageToast
+        message={toast?.message ?? null}
+        variant={toast?.variant}
+        onClear={() => setToast(null)}
+      />
+
       {!wsConnected && (
         <div className="ws-connecting-banner">
           Connecting to robots… Live position may be unavailable.
@@ -560,9 +577,6 @@ function DashboardContent() {
         </div>
 
         <div className="header-controls">
-          {commandToast && (
-            <span className="command-toast">{commandToast}</span>
-          )}
           <button
             className={`control-btn ${showGraph ? 'primary' : ''}`}
             onClick={() => setShowGraph(!showGraph)}
@@ -591,6 +605,10 @@ function DashboardContent() {
         </div>
       )}
 
+      {graphLoadError && (
+        <div className="dashboard-banner dashboard-banner--error">{graphLoadError}</div>
+      )}
+
       {activeCommand && (
         <div className={`command-status-bar command-status-bar--${getCommandStatusClass(activeCommand.status)}`}>
           <div className="command-status-main">
@@ -604,15 +622,30 @@ function DashboardContent() {
               ({activeCommand.goal.x.toFixed(2)}m, {activeCommand.goal.y.toFixed(2)}m, {((activeCommand.goal.yaw * 180) / Math.PI).toFixed(0)}°)
             </span>
           </div>
-          {activeCommand.error_message && (
-            <span className="command-status-error">{activeCommand.error_message}</span>
-          )}
+          <div className="command-status-actions">
+            {activeCommand.error_message && (
+              <span className="command-status-error">{activeCommand.error_message}</span>
+            )}
+            {ACTIVE_COMMAND_STATUSES.includes(activeCommand.status) && (
+              <button
+                type="button"
+                className="command-cancel-btn"
+                onClick={() => void handleCancelCommand()}
+                disabled={cancellingCommand}
+              >
+                {cancellingCommand ? 'Cancelling…' : 'Cancel'}
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       <div className="map-container">
-        <div className="map-wrapper">
-          <RobotMap 
+        <div className="map-wrapper map-wrapper--dashboard">
+          {graphLoading && (
+            <div className="map-loading-overlay">Loading graph…</div>
+          )}
+          <RobotMap
             mapName={selectedMapName ?? undefined}
             robotName={currentRobot.id !== '—' ? currentRobot.id : undefined}
             robots={robotsWithFullData}
@@ -629,6 +662,7 @@ function DashboardContent() {
             sendRobotDisabledReason="Robot is offline"
             onSendRobotToNode={handleSendRobotToNode}
             sendRobotLoading={sendRobotLoading}
+            onMapNotify={handleMapNotify}
           />
         </div>
       </div>

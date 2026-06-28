@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import '../styles/MapsContent.css';
-import { BACKEND_URL } from '../config';
+import PageToast from './PageToast';
+import { apiFetch, ApiError } from '../api';
 import type { MapSummary, MapDetail, RegisteredRobot, GraphMeta } from '../types';
 
 const GRAPH_EDITOR_MAP_KEY = 'graph_editor_selected_map';
@@ -23,52 +24,53 @@ function MapsContent({ onOpenDashboard, onOpenGraphEditor }: MapsContentProps) {
   const [robots, setRobots] = useState<RegisteredRobot[]>([]);
   const [graphs, setGraphs] = useState<GraphMeta[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; variant: 'info' | 'error' | 'success' } | null>(null);
 
   const loadMaps = useCallback(async () => {
-    const [mapsRes, robotsRes] = await Promise.all([
-      fetch(`${BACKEND_URL}/maps`),
-      fetch(`${BACKEND_URL}/robots-info`),
-    ]);
+    setLoadError(null);
+    try {
+      const [mapList, registered] = await Promise.all([
+        apiFetch<MapSummary[]>('/maps'),
+        apiFetch<RegisteredRobot[]>('/robots-info'),
+      ]);
 
-    if (mapsRes.ok) {
-      const list: MapSummary[] = await mapsRes.json();
-      setMaps(list);
-      if (list.length > 0) {
+      setMaps(mapList);
+      if (mapList.length > 0) {
         setSelectedName((prev) =>
-          prev && list.some((m) => m.map_name === prev) ? prev : list[0].map_name
+          prev && mapList.some((m) => m.map_name === prev) ? prev : mapList[0].map_name
         );
       }
 
-      const counts: Record<string, number> = {};
-      await Promise.all(
-        list.map(async (m) => {
-          try {
-            const res = await fetch(
-              `${BACKEND_URL}/graphs?map_name=${encodeURIComponent(m.map_name)}`
-            );
-            counts[m.map_name] = res.ok ? (await res.json()).length : 0;
-          } catch {
-            counts[m.map_name] = 0;
-          }
-        })
-      );
-      setGraphCounts(counts);
-    } else {
-      setMaps([]);
-    }
-
-    if (robotsRes.ok) {
-      const registered: RegisteredRobot[] = await robotsRes.json();
-      const counts: Record<string, number> = {};
+      const robotCountMap: Record<string, number> = {};
       registered.forEach((r) => {
-        counts[r.map_name] = (counts[r.map_name] ?? 0) + 1;
+        robotCountMap[r.map_name] = (robotCountMap[r.map_name] ?? 0) + 1;
       });
-      setRobotCounts(counts);
+      setRobotCounts(robotCountMap);
+
+      const graphCountEntries = await Promise.all(
+        mapList.map(async (m) => {
+          try {
+            const list = await apiFetch<GraphMeta[]>(
+              `/graphs?map_name=${encodeURIComponent(m.map_name)}`,
+            );
+            return [m.map_name, list.length] as const;
+          } catch {
+            return [m.map_name, 0] as const;
+          }
+        }),
+      );
+      setGraphCounts(Object.fromEntries(graphCountEntries));
+    } catch (e) {
+      setLoadError(e instanceof ApiError ? e.message : 'Failed to load maps');
+      setMaps([]);
     }
   }, []);
 
   useEffect(() => {
+    setLoading(true);
     loadMaps().finally(() => setLoading(false));
   }, [loadMaps]);
 
@@ -77,36 +79,34 @@ function MapsContent({ onOpenDashboard, onOpenGraphEditor }: MapsContentProps) {
       setDetail(null);
       setRobots([]);
       setGraphs([]);
+      setDetailError(null);
       return;
     }
 
     const loadDetail = async () => {
       setDetailLoading(true);
+      setDetailError(null);
       try {
-        const [mapRes, robotsRes, graphsRes] = await Promise.all([
-          fetch(`${BACKEND_URL}/maps/${encodeURIComponent(selectedName)}`),
-          fetch(`${BACKEND_URL}/maps/${encodeURIComponent(selectedName)}/robots`),
-          fetch(`${BACKEND_URL}/graphs?map_name=${encodeURIComponent(selectedName)}`),
+        const [mapDetail, mapRobots, mapGraphs] = await Promise.all([
+          apiFetch<MapDetail>(`/maps/${encodeURIComponent(selectedName)}`),
+          apiFetch<RegisteredRobot[]>(`/maps/${encodeURIComponent(selectedName)}/robots`),
+          apiFetch<GraphMeta[]>(`/graphs?map_name=${encodeURIComponent(selectedName)}`),
         ]);
 
-        if (mapRes.ok) setDetail(await mapRes.json());
-        else setDetail(null);
-
-        if (robotsRes.ok) setRobots(await robotsRes.json());
-        else setRobots([]);
-
-        if (graphsRes.ok) setGraphs(await graphsRes.json());
-        else setGraphs([]);
-      } catch {
+        setDetail(mapDetail);
+        setRobots(mapRobots);
+        setGraphs(mapGraphs);
+      } catch (e) {
         setDetail(null);
         setRobots([]);
         setGraphs([]);
+        setDetailError(e instanceof ApiError ? e.message : 'Failed to load map details');
       } finally {
         setDetailLoading(false);
       }
     };
 
-    loadDetail();
+    void loadDetail();
   }, [selectedName]);
 
   const stats = useMemo(() => {
@@ -124,7 +124,14 @@ function MapsContent({ onOpenDashboard, onOpenGraphEditor }: MapsContentProps) {
     onOpenGraphEditor?.(mapName);
   };
 
-  if (loading) {
+  const handleRefresh = async () => {
+    setLoading(true);
+    await loadMaps();
+    setLoading(false);
+    setToast({ message: 'Maps refreshed', variant: 'success' });
+  };
+
+  if (loading && maps.length === 0 && !loadError) {
     return (
       <main className="maps-page">
         <div className="maps-loading">Loading maps…</div>
@@ -134,12 +141,25 @@ function MapsContent({ onOpenDashboard, onOpenGraphEditor }: MapsContentProps) {
 
   return (
     <main className="maps-page">
+      <PageToast
+        message={toast?.message ?? null}
+        variant={toast?.variant}
+        onClear={() => setToast(null)}
+      />
+
       <header className="maps-header">
         <div>
           <h1 className="maps-title">Maps</h1>
           <p className="maps-subtitle">Browse floor maps, assigned robots, and navigation graphs</p>
         </div>
+        <button type="button" className="maps-btn maps-btn--refresh" onClick={() => void handleRefresh()}>
+          Refresh
+        </button>
       </header>
+
+      {loadError && (
+        <div className="maps-banner maps-banner--error">{loadError}</div>
+      )}
 
       <div className="maps-stats">
         <div className="maps-stat">
@@ -199,6 +219,8 @@ function MapsContent({ onOpenDashboard, onOpenGraphEditor }: MapsContentProps) {
               <p className="maps-detail-empty">Select a map</p>
             ) : detailLoading ? (
               <p className="maps-detail-empty">Loading…</p>
+            ) : detailError ? (
+              <p className="maps-detail-error">{detailError}</p>
             ) : (
               <>
                 <h2 className="maps-detail-title">{selectedName}</h2>

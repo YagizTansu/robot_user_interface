@@ -58,6 +58,8 @@ npm run start:dev
 
 Look for **MongoDB Change Streams initialized** in the logs.
 
+Health check: `GET http://localhost:3000/health`
+
 ### 3. Frontend
 
 ```bash

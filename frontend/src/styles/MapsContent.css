@@ -15,7 +15,35 @@
 }
 
 .maps-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 20px;
+}
+
+.maps-btn--refresh {
+  flex-shrink: 0;
+}
+
+.maps-banner {
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.maps-banner--error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+}
+
+.maps-detail-error {
+  color: #b91c1c;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
 }
 
 .maps-title {

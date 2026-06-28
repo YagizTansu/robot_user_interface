@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import '../styles/RobotMap.css';
-import { BACKEND_URL } from '../config';
+import { apiFetch, ApiError } from '../api';
 import type { Robot, GraphNode, DockingArea, GraphData, MapData } from '../types';
 
 interface RobotMapProps {
@@ -32,6 +32,7 @@ interface RobotMapProps {
   sendRobotDisabledReason?: string;
   onSendRobotToNode?: (node: GraphNode) => void | Promise<void>;
   sendRobotLoading?: boolean;
+  onMapNotify?: (message: string, variant?: 'info' | 'error' | 'success') => void;
 }
 
 interface Point {
@@ -59,11 +60,6 @@ interface ProhibitedZone {
   zone_type: string;
   polygon_points: number[];
   timestamp: number;
-}
-
-interface Point {
-  x: number;
-  y: number;
 }
 
 interface DockPoseEdit {
@@ -350,6 +346,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
   sendRobotDisabledReason,
   onSendRobotToNode,
   sendRobotLoading = false,
+  onMapNotify,
 }) => {
   const [selectedRobotId, setSelectedRobotId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -363,6 +360,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
   
   // Dynamic map data from backend
   const [mapData, setMapData] = useState<MapData | null>(null);
+  const [mapLoading, setMapLoading] = useState(false);
   
   // Polygon creation states
   const [polygonMode, setPolygonMode] = useState<PolygonCreationMode>({ isActive: false, type: 'restricted' });
@@ -486,19 +484,21 @@ const RobotMap: React.FC<RobotMapProps> = ({
     if (!mapName && !robotName) return;
 
     const fetchMap = async () => {
+      setMapLoading(true);
       try {
-        const url = mapName
-          ? `${BACKEND_URL}/maps/${encodeURIComponent(mapName)}`
-          : `${BACKEND_URL}/maps/by-robot/${robotName}`;
-        const response = await fetch(url);
-        if (response.ok) {
-          const data: MapData = await response.json();
-          setMapData(data);
-        } else {
-          console.error(`Failed to load map: ${mapName ?? robotName}`);
-        }
-      } catch (error) {
-        console.error('Error fetching map data:', error);
+        const path = mapName
+          ? `/maps/${encodeURIComponent(mapName)}`
+          : `/maps/by-robot/${encodeURIComponent(robotName!)}`;
+        const data = await apiFetch<MapData>(path);
+        setMapData(data);
+      } catch (e) {
+        setMapData(null);
+        onMapNotify?.(
+          e instanceof ApiError ? e.message : 'Failed to load map',
+          'error',
+        );
+      } finally {
+        setMapLoading(false);
       }
     };
 
@@ -515,33 +515,33 @@ const RobotMap: React.FC<RobotMapProps> = ({
 
     const loadProhibitedZones = async () => {
       try {
-        const response = await fetch(
-          `${BACKEND_URL}/zones/map/${encodeURIComponent(activeMapName)}`
+        const zones = await apiFetch<ProhibitedZone[]>(
+          `/zones/map/${encodeURIComponent(activeMapName)}`,
         );
-        if (response.ok) {
-          const zones: ProhibitedZone[] = await response.json();
-          const convertedZones: RestrictedArea[] = zones
-            .filter((zone) => zone.zone_type !== 'docking-pallet')
-            .map((zone) => ({
-              id: zone._id,
-              name: zone.zone_name,
-              polygonPoints: zone.polygon_points,
-              color: '#ef4444',
-              type: 'polygon' as const,
-              zoneType: 'restricted' as const,
-              mapName: zone.map_name,
-              isSelected: false,
-            }));
+        const convertedZones: RestrictedArea[] = zones
+          .filter((zone) => zone.zone_type !== 'docking-pallet')
+          .map((zone) => ({
+            id: zone._id,
+            name: zone.zone_name,
+            polygonPoints: zone.polygon_points,
+            color: '#ef4444',
+            type: 'polygon' as const,
+            zoneType: 'restricted' as const,
+            mapName: zone.map_name,
+            isSelected: false,
+          }));
 
-          onRestrictedAreasChange?.(convertedZones);
-        }
-      } catch (error) {
-        console.error('Error loading prohibited zones:', error);
+        onRestrictedAreasChange?.(convertedZones);
+      } catch (e) {
+        onMapNotify?.(
+          e instanceof ApiError ? e.message : 'Failed to load restricted zones',
+          'error',
+        );
       }
     };
 
     loadProhibitedZones();
-  }, [mapName, mapData?.map_name, enablePolygonDrawing]);
+  }, [mapName, mapData?.map_name, enablePolygonDrawing, onRestrictedAreasChange]);
 
   const convertToPixel = (position: { x: number; y: number }) => {
     if (mapData) {
@@ -835,13 +835,13 @@ const RobotMap: React.FC<RobotMapProps> = ({
 
     const targetMapName = area.mapName ?? mapName ?? mapData?.map_name;
     if (!targetMapName) {
-      console.error('Cannot save zone: no map name');
+      onMapNotify?.('Cannot save zone: no map selected', 'error');
       return null;
     }
     const zoneType = area.zoneType ?? 'restricted';
 
     try {
-      const response = await fetch(`${BACKEND_URL}/zones`, {
+      const savedZone = await apiFetch<ProhibitedZone>('/zones', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -852,27 +852,24 @@ const RobotMap: React.FC<RobotMapProps> = ({
           timestamp: Date.now(),
         }),
       });
-
-      if (response.ok) {
-        const savedZone: ProhibitedZone = await response.json();
-        return savedZone;
-      }
-      console.error('Failed to save zone to database');
-    } catch (error) {
-      console.error('Error saving zone to database:', error);
+      onMapNotify?.('Zone saved', 'success');
+      return savedZone;
+    } catch (e) {
+      onMapNotify?.(e instanceof ApiError ? e.message : 'Failed to save zone', 'error');
     }
     return null;
   };
 
   const updateZoneNameInDatabase = async (areaId: string, name: string) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/zones/${areaId}`, {
+      await apiFetch(`/zones/${areaId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ zone_name: name }),
       });
-      return res.ok;
-    } catch {
+      return true;
+    } catch (e) {
+      onMapNotify?.(e instanceof ApiError ? e.message : 'Failed to rename zone', 'error');
       return false;
     }
   };
@@ -900,18 +897,11 @@ const RobotMap: React.FC<RobotMapProps> = ({
 
   const deleteAreaFromDatabase = async (areaId: string) => {
     try {
-      const response = await fetch(`${BACKEND_URL}/zones/${areaId}`, {
-        method: 'DELETE',
-      });
-
-      if (response.ok) {
-        return true;
-      } else {
-        console.error('Failed to delete zone from database');
-        return false;
-      }
-    } catch (error) {
-      console.error('Error deleting zone from database:', error);
+      await apiFetch(`/zones/${areaId}`, { method: 'DELETE' });
+      onMapNotify?.('Zone deleted', 'success');
+      return true;
+    } catch (e) {
+      onMapNotify?.(e instanceof ApiError ? e.message : 'Failed to delete zone', 'error');
       return false;
     }
   };
@@ -941,6 +931,9 @@ const RobotMap: React.FC<RobotMapProps> = ({
 
   return (
     <div className="robot-map-container">
+      {mapLoading && (
+        <div className="robot-map-loading">Loading map…</div>
+      )}
       <div className="zoom-controls">
         <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

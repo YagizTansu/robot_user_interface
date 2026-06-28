@@ -152,9 +152,14 @@ const Sidebar = ({
         {menuItems.map(item => (
           <button
             key={item.id}
-            className={`nav-item ${activeMenuItem === item.id ? 'active' : ''}`}
-            onClick={() => setActiveMenuItem(item.id)}
-            title={sidebarCollapsed ? item.label : ''}
+            type="button"
+            className={`nav-item ${activeMenuItem === item.id ? 'active' : ''} ${item.comingSoon ? 'nav-item--disabled' : ''}`}
+            onClick={() => {
+              if (!item.comingSoon) setActiveMenuItem(item.id);
+            }}
+            disabled={item.comingSoon}
+            title={sidebarCollapsed ? item.label : item.comingSoon ? `${item.label} (coming soon)` : ''}
+            aria-disabled={item.comingSoon || undefined}
           >
             <span className="nav-icon">{item.icon}</span>
             {!sidebarCollapsed && (

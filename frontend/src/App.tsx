@@ -62,38 +62,6 @@ function App() {
         )}
         
         {activeMenuItem === 'graph-editor' && <GraphEditor />}
-        
-        {activeMenuItem === 'analytics' && (
-          <main className="main-content">
-            <div className="grid-container">
-              <h2>Analytics Page - Coming Soon</h2>
-            </div>
-          </main>
-        )}
-        
-        {activeMenuItem === 'monitoring' && (
-          <main className="main-content">
-            <div className="grid-container">
-              <h2>Monitoring Page - Coming Soon</h2>
-            </div>
-          </main>
-        )}
-        
-        {activeMenuItem === 'settings' && (
-          <main className="main-content">
-            <div className="grid-container">
-              <h2>Settings Page - Coming Soon</h2>
-            </div>
-          </main>
-        )}
-        
-        {activeMenuItem === 'alerts' && (
-          <main className="main-content">
-            <div className="grid-container">
-              <h2>Alerts Page - Coming Soon</h2>
-            </div>
-          </main>
-        )}
       </div>
     </div>
   )
