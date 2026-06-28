@@ -129,6 +129,42 @@ interface PolygonCreationMode {
   startPoint?: Point;
 }
 
+const MAP_VIEW_STORAGE_KEY = 'robot_map_view_settings';
+
+interface MapViewSettings {
+  rotation: number;
+  zoom: number;
+  pan: { x: number; y: number };
+}
+
+function loadMapViewSettings(mapKey: string): MapViewSettings | null {
+  try {
+    const raw = localStorage.getItem(MAP_VIEW_STORAGE_KEY);
+    if (!raw) return null;
+    const all = JSON.parse(raw) as Record<string, MapViewSettings>;
+    const saved = all[mapKey];
+    if (!saved) return null;
+    return {
+      rotation: saved.rotation ?? 0,
+      zoom: saved.zoom ?? 1,
+      pan: saved.pan ?? { x: 0, y: 0 },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveMapViewSettings(mapKey: string, settings: MapViewSettings) {
+  try {
+    const raw = localStorage.getItem(MAP_VIEW_STORAGE_KEY);
+    const all = raw ? JSON.parse(raw) : {};
+    all[mapKey] = settings;
+    localStorage.setItem(MAP_VIEW_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
 const NODE_R_DEFAULT = 8;
 const NODE_R_EDGE = 8;
 const NODE_R_ACTIVE = 9;
@@ -369,8 +405,8 @@ const RobotMap: React.FC<RobotMapProps> = ({
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [mapRotation, setMapRotation] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   
   // Dynamic map data from backend
   const [mapData, setMapData] = useState<MapData | null>(null);
@@ -389,6 +425,45 @@ const RobotMap: React.FC<RobotMapProps> = ({
   const [editingDockPose, setEditingDockPose] = useState<DockPoseEdit | null>(null);
   const didPanRef = useRef(false);
   const panStartClientRef = useRef({ x: 0, y: 0 });
+  const panStartOffsetRef = useRef({ x: 0, y: 0 });
+  const mapViewStateRef = useRef<MapViewSettings>({
+    rotation: 0,
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+  });
+
+  const mapViewKey = mapName ?? mapData?.map_name ?? '';
+
+  mapViewStateRef.current = {
+    rotation: mapRotation,
+    zoom: zoomLevel,
+    pan: panOffset,
+  };
+
+  // Restore zoom / pan / rotation per map (survives refresh & navigation)
+  useEffect(() => {
+    if (!mapViewKey) return;
+    const saved = loadMapViewSettings(mapViewKey);
+    setMapRotation(saved?.rotation ?? 0);
+    setZoomLevel(saved?.zoom ?? 1);
+    setPanOffset(saved?.pan ?? { x: 0, y: 0 });
+  }, [mapViewKey]);
+
+  // Persist when switching maps or unmounting
+  useEffect(() => {
+    if (!mapViewKey) return;
+    return () => {
+      saveMapViewSettings(mapViewKey, mapViewStateRef.current);
+    };
+  }, [mapViewKey]);
+
+  useEffect(() => {
+    if (!mapViewKey || isDragging) return;
+    const timer = window.setTimeout(() => {
+      saveMapViewSettings(mapViewKey, mapViewStateRef.current);
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [mapViewKey, mapRotation, zoomLevel, panOffset, isDragging]);
 
   const normalizedDockingAreas = useMemo(
     () => (graphData?.docking_areas ?? []).map(normalizeDockingArea),
@@ -603,14 +678,49 @@ const RobotMap: React.FC<RobotMapProps> = ({
   const handleResetZoom = () => {
     setZoomLevel(1);
     setPanOffset({ x: 0, y: 0 });
+    setMapRotation(0);
   };
 
+  const handleRotateMap = () => {
+    setMapRotation((prev) => (prev + 90) % 360);
+  };
+
+  const mapViewTransform = useMemo(() => {
+    return `rotate(${mapRotation}deg) scale(${zoomLevel})`;
+  }, [mapRotation, zoomLevel]);
+
+  // Screen-space pan via window listeners (smooth, works outside map bounds)
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const onMove = (e: MouseEvent) => {
+      const dx = e.clientX - panStartClientRef.current.x;
+      const dy = e.clientY - panStartClientRef.current.y;
+      if (Math.hypot(dx, dy) > 3) didPanRef.current = true;
+      setPanOffset({
+        x: panStartOffsetRef.current.x + dx,
+        y: panStartOffsetRef.current.y + dy,
+      });
+    };
+
+    const onUp = () => setIsDragging(false);
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [isDragging]);
+
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
     if (polygonMode.isActive || draggingNodeId || placingNode || rotatingNodeId || isAddingNode || draggingDockingId || rotatingDockingId) return;
+    e.preventDefault();
     didPanRef.current = false;
     panStartClientRef.current = { x: e.clientX, y: e.clientY };
+    panStartOffsetRef.current = { ...panOffset };
     setIsDragging(true);
-    setDragStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -705,18 +815,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
       });
     }
     
-    if (!isDragging || polygonMode.isActive || draggingNodeId) return;
-    const dx = e.clientX - panStartClientRef.current.x;
-    const dy = e.clientY - panStartClientRef.current.y;
-    if (Math.hypot(dx, dy) > 4) didPanRef.current = true;
-    const newPanOffset = {
-      x: e.clientX - dragStart.x,
-      y: e.clientY - dragStart.y
-    };
-    const maxPan = 200 * Math.max(1, zoomLevel - 1);
-    newPanOffset.x = Math.max(-maxPan, Math.min(maxPan, newPanOffset.x));
-    newPanOffset.y = Math.max(-maxPan, Math.min(maxPan, newPanOffset.y));
-    setPanOffset(newPanOffset);
+    if (isDragging) return;
   };
 
   const handleMouseUp = () => {
@@ -901,7 +1000,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
             <line x1="8" y1="11" x2="14" y2="11"/>
           </svg>
         </button>
-        <button className="zoom-btn" onClick={handleResetZoom} title="Reset Zoom">
+        <button className="zoom-btn" onClick={handleResetZoom} title="Reset view (zoom, pan, rotation)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="8"/>
             <path d="m21 21-4.35-4.35"/>
@@ -912,6 +1011,17 @@ const RobotMap: React.FC<RobotMapProps> = ({
             <circle cx="11" cy="11" r="8"/>
             <path d="m21 21-4.35-4.35"/>
             <line x1="8" y1="11" x2="14" y2="11"/>
+          </svg>
+        </button>
+        <div style={{ height: '4px', pointerEvents: 'none' }} />
+        <button
+          className={`zoom-btn ${mapRotation !== 0 ? 'active rotate' : ''}`}
+          onClick={handleRotateMap}
+          title={`Rotate map 90° (${mapRotation}°)`}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 12a9 9 0 1 1-3-6.7"/>
+            <polyline points="21,3 21,9 15,9"/>
           </svg>
         </button>
         
@@ -978,21 +1088,31 @@ const RobotMap: React.FC<RobotMapProps> = ({
         }}
         onClick={handleMapBackgroundClick}
       >
+        <div
+          className="map-pan-layer"
+          style={{
+            width: '100%',
+            height: '100%',
+            transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
+            transition: isDragging ? 'none' : undefined,
+            willChange: isDragging ? 'transform' : undefined,
+          }}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+        >
         <div 
           className="map-content"
           style={{
             position: 'relative',
             width: '100%',
             height: '100%',
-            transform: `scale(${zoomLevel}) translate(${panOffset.x}px, ${panOffset.y}px)`,
-            transition: isDragging ? 'none' : 'transform 0.3s ease',
+            transform: mapViewTransform,
+            transition: isDragging ? 'none' : 'transform 0.2s ease',
             transformOrigin: 'center center',
             cursor: polygonMode.isActive || isAddingNode || placingNode ? 'crosshair' : (isDragging ? 'grabbing' : 'grab')
           }}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
         >
           {/* Single SVG: base map + all overlays. preserveAspectRatio keeps correct proportions. */}
           <svg
@@ -1590,6 +1710,7 @@ const RobotMap: React.FC<RobotMapProps> = ({
               })()
             )}
           </svg>
+        </div>
         </div>
       </div>
 
